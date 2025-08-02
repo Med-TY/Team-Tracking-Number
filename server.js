@@ -199,7 +199,7 @@ async function fetchShopifyOrder(orderNumber) {
     }
 }
 
-// Generate realistic tracking events with random intervals and timing
+// FIXED: Generate realistic tracking events with proper date progression
 function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate) {
     const events = [];
     const today = new Date();
@@ -208,8 +208,27 @@ function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCod
     // Calculate days between order and today
     const daysDiff = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
     
-    // Random number of events (4-7 events before delivery)
-    const maxEventsBeforeDelivery = 4 + Math.floor(Math.random() * 4); // 4-7 events
+    // Determine how many events should be shown based on days passed
+    let eventsToShow;
+    if (daysDiff <= 0) {
+        eventsToShow = 1; // Just order confirmed
+    } else if (daysDiff <= 2) {
+        eventsToShow = 2; // Order confirmed + processed
+    } else if (daysDiff <= 4) {
+        eventsToShow = 3; // + shipment created
+    } else if (daysDiff <= 6) {
+        eventsToShow = 4; // + package picked up
+    } else if (daysDiff <= 8) {
+        eventsToShow = 5; // + departed origin
+    } else if (daysDiff <= 10) {
+        eventsToShow = 6; // + in transit
+    } else if (daysDiff <= 12) {
+        eventsToShow = 7; // + arrived at sorting
+    } else if (daysDiff <= 14) {
+        eventsToShow = 8; // + departed sorting
+    } else {
+        eventsToShow = 9; // + arrived at destination / out for delivery
+    }
     
     // Get appropriate facilities for the destination state
     const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
@@ -217,75 +236,78 @@ function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCod
     
     // All possible event templates
     const eventTemplates = [
-        { status: 'Order Confirmed', location: 'Order Processing Center' },
-        { status: 'Order Processed', location: 'Fulfillment Center' },
-        { status: 'Shipment Created', location: 'Origin Facility' },
-        { status: 'Package Picked Up', location: 'Local Pickup Facility' },
-        { status: 'Departed Origin Facility', location: 'Origin Facility' },
-        { status: 'In Transit', location: null }, // Will be random transit hub
-        { status: 'Arrived at Sorting Facility', location: null }, // Will be random facility
-        { status: 'Departed Sorting Facility', location: null },
-        { status: 'Arrived at Destination Facility', location: destinationFacility },
-        { status: 'Out for Delivery', location: `${destinationCity}, ${provinceCode}` }
+        { status: 'Order Confirmed', location: 'Order Processing Center', dayOffset: 0 },
+        { status: 'Order Processed', location: 'Fulfillment Center', dayOffset: 1 },
+        { status: 'Shipment Created', location: 'Origin Facility', dayOffset: 2 },
+        { status: 'Package Picked Up', location: 'Local Pickup Facility', dayOffset: 3 },
+        { status: 'Departed Origin Facility', location: 'Origin Facility', dayOffset: 4 },
+        { status: 'In Transit', location: null, dayOffset: 6 }, // Will be random transit hub
+        { status: 'Arrived at Sorting Facility', location: null, dayOffset: 8 }, // Will be random facility
+        { status: 'Departed Sorting Facility', location: null, dayOffset: 10 },
+        { status: 'Arrived at Destination Facility', location: destinationFacility, dayOffset: 12 },
+        { status: 'Out for Delivery', location: `${destinationCity}, ${provinceCode}`, dayOffset: 14 }
     ];
     
-    // Generate events with random timing
-    let currentDate = new Date(startDate);
-    let eventIndex = 0;
-    
-    // Always start with Order Confirmed
-    events.push(createEvent(
-        eventTemplates[0].status,
-        new Date(currentDate),
-        eventTemplates[0].location,
-        eventIndex,
-        daysDiff
-    ));
-    eventIndex++;
-    
-    // Generate random events up to maxEventsBeforeDelivery
-    for (let i = 1; i < Math.min(maxEventsBeforeDelivery, eventTemplates.length); i++) {
-        // Random days between events (1-9 days)
-        const daysToAdd = 1 + Math.floor(Math.random() * 9);
-        currentDate.setDate(currentDate.getDate() + daysToAdd);
+    // Generate events up to what should be shown by now
+    for (let i = 0; i < Math.min(eventsToShow, eventTemplates.length); i++) {
+        const template = eventTemplates[i];
         
-        // Only add event if it's not in the future (unless it's very recent)
-        const daysDiffFromToday = Math.floor((today - currentDate) / (1000 * 60 * 60 * 24));
-        if (daysDiffFromToday >= -1) { // Allow events up to 1 day in the future
-            const template = eventTemplates[i];
-            let location = template.location;
-            
-            // For transit events, pick random locations
-            if (!location) {
-                if (template.status.includes('Transit')) {
-                    location = majorTransitHubs[Math.floor(Math.random() * majorTransitHubs.length)];
-                } else if (template.status.includes('Sorting')) {
-                    location = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
-                }
-            }
-            
-            events.push(createEvent(
-                template.status,
-                new Date(currentDate),
-                location,
-                eventIndex,
-                daysDiff
-            ));
-            eventIndex++;
+        // Calculate the event date (order date + day offset)
+        const eventDate = new Date(startDate);
+        eventDate.setDate(eventDate.getDate() + template.dayOffset);
+        
+        // Skip events that are in the future
+        if (eventDate > today) {
+            break;
         }
+        
+        let location = template.location;
+        
+        // For transit events, pick random locations
+        if (!location) {
+            if (template.status.includes('Transit')) {
+                location = majorTransitHubs[Math.floor(Math.random() * majorTransitHubs.length)];
+            } else if (template.status.includes('Sorting')) {
+                location = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
+            }
+        }
+        
+        // Determine if this is the current event (last one in the list)
+        const isCurrentEvent = (i === eventsToShow - 1) && !isDelivered;
+        
+        events.push({
+            status: template.status,
+            date: eventDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            time: generateRealisticTime(eventDate, template.status),
+            location: location,
+            completed: true, // All shown events are completed
+            current: isCurrentEvent,
+            isDelivered: false
+        });
     }
     
     // Add delivered event if actually delivered in Shopify
     if (isDelivered && deliveryDate) {
         const actualDeliveryDate = new Date(deliveryDate);
-        events.push(createEvent(
-            'Delivered',
-            actualDeliveryDate,
-            `${destinationCity}, ${provinceCode}`,
-            eventIndex,
-            daysDiff,
-            true
-        ));
+        events.push({
+            status: 'Delivered',
+            date: actualDeliveryDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            time: generateRealisticTime(actualDeliveryDate, 'Delivered'),
+            location: `${destinationCity}, ${provinceCode}`,
+            completed: true,
+            current: false,
+            isDelivered: true
+        });
     }
     
     return events;
