@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Status Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Admin Interface Styles */
+        .admin-panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .admin-header {
+            border-bottom: 2px solid #e1e8ed;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+
+        .admin-header h1 {
+            color: #1a1a1a;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .admin-header p {
+            color: #666;
+            margin-top: 8px;
+        }
+
+        .connection-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-top: 10px;
+            margin-right: 10px;
+        }
+
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #444;
+        }
+
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #e1e8ed;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d8dd;
+        }
+
+        /* Preview Section */
+        .preview-section {
+            background: #f8f9fa;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+            display: none;
+        }
+
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .preview-header h3 {
+            color: #333;
+            font-size: 20px;
+        }
+
+        .copy-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid #e1e8ed;
+        }
+
+        .copy-link input {
+            border: none;
+            background: none;
+            font-size: 14px;
+            width: 300px;
+        }
+
+        .copy-btn {
+            background: #4CAF50;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            position: relative;
+        }
+
+        .copy-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .copy-btn.saving {
+            background: #ff9800;
+        }
+
+        .copy-btn.saved {
+            background: #2196F3;
+        }
+
+        /* Page status indicator */
+        .page-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+            font-weight: 500;
+        }
+
+        .page-status.temporary {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .page-status.saved {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        /* Tracking Page Styles */
+        .tracking-page {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            padding: 40px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .tracking-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .tracking-header h1 {
+            color: #1a1a1a;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .tracking-header p {
+            color: #666;
+            font-size: 18px;
+        }
+
+        .order-info {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .order-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-label {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            color: #1a1a1a;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        /* Delivery Status Banner */
+        .delivery-banner {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 30px;
+            animation: pulse 2s infinite;
+        }
+
+        .delivery-banner h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .delivery-banner p {
+            opacity: 0.9;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+        }
+
+        /* Timeline Styles */
+        .timeline {
+            position: relative;
+            padding: 20px 0;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 30px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #e1e8ed;
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-left: 70px;
+            margin-bottom: 30px;
+        }
+
+        .timeline-icon {
+            position: absolute;
+            left: 20px;
+            top: 0;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            border: 3px solid #e1e8ed;
+            z-index: 2;
+        }
+
+        .timeline-item.completed .timeline-icon {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+
+        .timeline-item.delivered .timeline-icon {
+            background: #FF9800;
+            border-color: #FF9800;
+            box-shadow: 0 0 0 4px rgba(255, 152, 0, 0.2);
+        }
+
+        .timeline-item.current .timeline-icon {
+            background: #2196F3;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.2);
+            animation: pulse-blue 2s infinite;
+        }
+
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(33, 150, 243, 0); }
+            100% { box-shadow: 0 0 0 4px rgba(33, 150, 243, 0); }
+        }
+
+        .timeline-content {
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .timeline-item.completed .timeline-content {
+            border-color: #4CAF50;
+            background: #f8fff8;
+        }
+
+        .timeline-item.delivered .timeline-content {
+            border-color: #FF9800;
+            background: #fff8e1;
+        }
+
+        .timeline-item.current .timeline-content {
+            border-color: #2196F3;
+            background: #f0f8ff;
+        }
+
+        .timeline-title {
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 4px;
+        }
+
+        .timeline-date {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .timeline-location {
+            color: #888;
+            font-size: 14px;
+            margin-top: 4px;
+        }
+
+        /* Alert Styles */
+        .alert {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+            color: #856404;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            border-color: #bee5eb;
+            color: #0c5460;
+        }
+
+        .success-message {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            margin: 20px auto;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Setup Instructions */
+        .setup-instructions {
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .setup-instructions h3 {
+            color: #1565c0;
+            margin-bottom: 10px;
+        }
+
+        .setup-instructions ol {
+            margin-left: 20px;
+            color: #1565c0;
+        }
+
+        .setup-instructions code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .admin-panel, .tracking-page {
+                padding: 20px;
+            }
+            
+            .copy-link input {
+                width: 200px;
+            }
+            
+            .timeline-item {
+                padding-left: 50px;
+            }
+            
+            .timeline::before {
+                left: 20px;
+            }
+            
+            .timeline-icon {
+                left: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Admin Panel -->
+        <div id="adminPanel" class="admin-panel">
+            <div class="admin-header">
+                <h1>Order Status Update Manager</h1>
+                <p>Create realistic status pages for orders with automatic Shopify integration and Firebase hosting</p>
+                <div>
+                    <div id="connectionStatus" class="connection-status disconnected">
+                        <span class="status-dot"></span>
+                        <span id="connectionText">Checking connection...</span>
+                    </div>
+                    <div id="firebaseStatus" class="connection-status disconnected">
+                        <span class="status-dot"></span>
+                        <span id="firebaseText">Checking Firebase...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="setupInstructions" class="setup-instructions" style="display: none;">
+                <h3>⚠️ Backend Setup Required</h3>
+                <p>To connect to Shopify and Firebase, you need to set up the backend server:</p>
+                <ol>
+                    <li>Install Node.js on your computer</li>
+                    <li>Create a new folder and add the <code>server.js</code> file</li>
+                    <li>Run <code>npm install express axios cors dotenv firebase-admin</code></li>
+                    <li>Create a <code>.env</code> file with your credentials:
+                        <ul style="margin-top: 5px;">
+                            <li><code>SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com</code></li>
+                            <li><code>SHOPIFY_ACCESS_TOKEN=your_access_token</code></li>
+                            <li><code>FIREBASE_SERVICE_ACCOUNT={"type":"service_account",...}</code></li>
+                        </ul>
+                    </li>
+                    <li>Run <code>npm start</code> to start the server</li>
+                    <li>Make sure the server is running on <code id="backendUrl">http://localhost:3000</code></li>
+                </ol>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>🔥 Firebase Integration Features:</strong> 
+                <ul style="margin: 10px 0 0 20px;">
+                    <li>✅ Status pages saved to Firebase when you copy the link</li>
+                    <li>✅ Automatic cleanup of pages older than 30 days</li>
+                    <li>✅ Temporary pages expire after 1 hour if not saved</li>
+                    <li>✅ Real-time updates from Shopify every 4 hours</li>
+                    <li>✅ Scalable hosting with Firebase Firestore</li>
+                </ul>
+            </div>
+
+            <div id="errorMessage" class="alert alert-error" style="display: none;"></div>
+
+            <form id="orderForm">
+                <div class="form-group">
+                    <label for="orderNumber">Order Number (from Shopify)</label>
+                    <input type="text" id="orderNumber" name="orderNumber" required placeholder="#1234" title="Enter the Shopify order number (e.g., #1234)">
+                </div>
+
+                <div class="form-group">
+                    <label for="trackingNumber">Tracking Number</label>
+                    <input type="text" id="trackingNumber" name="trackingNumber" required placeholder="1Z999AA10123456784" title="Enter the shipping carrier tracking number">
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" class="btn-primary" id="submitBtn">Generate Status Page</button>
+                    <button type="button" class="btn-secondary" onclick="resetForm()">Reset</button>
+                </div>
+            </form>
+
+            <div class="spinner" id="loadingSpinner"></div>
+
+            <div id="previewSection" class="preview-section">
+                <div class="preview-header">
+                    <div>
+                        <h3>Status Page Generated!</h3>
+                        <span id="pageStatus" class="page-status temporary">📄 Temporary - Copy link to save permanently</span>
+                    </div>
+                    <div class="copy-link">
+                        <input type="text" id="generatedLink" readonly>
+                        <button class="copy-btn" id="copyButton" onclick="copyLink()">Copy & Save</button>
+                    </div>
+                </div>
+                <div id="previewContent"></div>
+            </div>
+
+            <div id="successMessage" class="success-message">
+                ✓ Link copied to clipboard!
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - Update this to match your backend URL
+        const API_BASE_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:3000' 
+            : window.location.origin; // Use same origin in production
+
+        // Global variables
+        let currentPageId = null;
+        let isPageSaved = false;
+
+        // Check backend connection on load
+        checkBackendConnection();
+
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/health`);
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    // Update Shopify connection status
+                    document.getElementById('connectionStatus').className = 'connection-status connected';
+                    document.getElementById('connectionText').textContent = data.shopifyConnected 
+                        ? 'Connected to Shopify' 
+                        : 'Backend running (Shopify not configured)';
+                    
+                    // Update Firebase connection status
+                    document.getElementById('firebaseStatus').className = data.firebaseConnected 
+                        ? 'connection-status connected' 
+                        : 'connection-status disconnected';
+                    document.getElementById('firebaseText').textContent = data.firebaseConnected 
+                        ? 'Firebase Connected' 
+                        : 'Firebase not configured';
+                    
+                    document.getElementById('setupInstructions').style.display = 'none';
+                }
+            } catch (error) {
+                document.getElementById('connectionStatus').className = 'connection-status disconnected';
+                document.getElementById('connectionText').textContent = 'Backend not connected';
+                document.getElementById('firebaseStatus').className = 'connection-status disconnected';
+                document.getElementById('firebaseText').textContent = 'Firebase unavailable';
+                document.getElementById('setupInstructions').style.display = 'block';
+                document.getElementById('backendUrl').textContent = API_BASE_URL;
+            }
+        }
+
+        // Handle form submission
+        document.getElementById('orderForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Clear previous errors
+            document.getElementById('errorMessage').style.display = 'none';
+            
+            const formData = {
+                orderNumber: document.getElementById('orderNumber').value,
+                trackingNumber: document.getElementById('trackingNumber').value
+            };
+
+            // Show loading spinner
+            document.getElementById('loadingSpinner').style.display = 'block';
+            document.getElementById('submitBtn').disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/create-status-page`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Store the page ID globally
+                    currentPageId = result.pageId;
+                    isPageSaved = false;
+                    
+                    // Generate the public URL
+                    const publicUrl = `${window.location.origin}${window.location.pathname}?track=${result.pageId}`;
+                    document.getElementById('generatedLink').value = publicUrl;
+                    
+                    // Show preview
+                    showPreview(result.data);
+                    
+                    // Reset copy button state
+                    resetCopyButton();
+                    
+                    // Show preview section
+                    document.getElementById('previewSection').style.display = 'block';
+                    
+                    // Scroll to preview
+                    document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    showError(result.error || 'Failed to create status page');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showError('Failed to connect to backend. Please check if the server is running.');
+            } finally {
+                // Hide spinner and re-enable button
+                document.getElementById('loadingSpinner').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+            }
+        });
+
+        // Show error message
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            errorDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Show preview of the tracking page
+        function showPreview(data) {
+            const previewHtml = generateTrackingPageHTML(data);
+            document.getElementById('previewContent').innerHTML = previewHtml;
+        }
+
+        // Generate tracking page HTML with realistic US shipping states (same as original)
+        function generateTrackingPageHTML(data) {
+            // Check if package is delivered (only if actually delivered in Shopify)
+            const isDelivered = data.isDelivered === true;
+            
+            // Create delivery banner if delivered
+            const deliveryBanner = isDelivered ? `
+                <div class="delivery-banner">
+                    <h2>📦 Package Delivered!</h2>
+                    <p>Your order has been successfully delivered to ${data.destination}</p>
+                    ${data.deliveryDate ? `<p style="opacity: 0.9; font-size: 14px;">Delivered on: ${new Date(data.deliveryDate).toLocaleDateString()}</p>` : ''}
+                </div>
+            ` : '';
+
+            const eventsHtml = data.events.map(event => {
+                let itemClass = 'timeline-item';
+                if (event.completed) {
+                    itemClass += ' completed';
+                }
+                if (event.current) {
+                    itemClass += ' current';
+                }
+                if (event.isDelivered) {
+                    itemClass += ' delivered';
+                }
+
+                return `
+                    <div class="${itemClass}">
+                        <div class="timeline-icon"></div>
+                        <div class="timeline-content">
+                            <div class="timeline-title">${event.status}</div>
+                            <div class="timeline-date">${event.date} at ${event.time}</div>
+                            ${event.location ? `<div class="timeline-location">📍 ${event.location}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Current status message based on latest event
+            let currentStatusMessage = '';
+            if (isDelivered) {
+                currentStatusMessage = `
+                    <div class="alert alert-success">
+                        <strong>✅ Delivery Confirmed:</strong> Your package has been successfully delivered according to our tracking system.
+                    </div>
+                `;
+            } else {
+                const latestEvent = data.events[data.events.length - 1];
+                if (latestEvent && latestEvent.current) {
+                    currentStatusMessage = `
+                        <div class="alert">
+                            <strong>📍 Current Status:</strong> ${latestEvent.status} - Your package is progressing through our shipping network.
+                        </div>
+                    `;
+                } else {
+                    currentStatusMessage = `
+                        <div class="alert">
+                            <strong>📦 In Transit:</strong> Your package is moving through our shipping network. Updates are posted as events occur.
+                        </div>
+                    `;
+                }
+            }
+
+            // Official carrier tracking button
+            const carrierTrackingButton = data.trackingUrl ? `
+                <div style="text-align: center; margin: 25px 0; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e1e8ed;">
+                    <p style="margin-bottom: 12px; color: #666; font-size: 14px;">
+                        📋 For real-time updates and detailed tracking information:
+                    </p>
+                    <a href="${data.trackingUrl}" target="_blank" rel="noopener" style="
+                        display: inline-block;
+                        background: linear-gradient(135deg, #2196F3, #1976D2);
+                        color: white;
+                        padding: 14px 28px;
+                        border-radius: 8px;
+                        text-decoration: none;
+                        font-weight: 600;
+                        font-size: 16px;
+                        transition: all 0.3s;
+                        box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+                    " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(33, 150, 243, 0.4)'" 
+                       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(33, 150, 243, 0.3)'">
+                        🚚 Track with ${data.carrier || 'Official Carrier'} →
+                    </a>
+                    <p style="margin-top: 8px; color: #888; font-size: 12px;">
+                        Opens official ${data.carrier || 'carrier'} tracking page
+                    </p>
+                </div>
+            ` : '';
+
+            return `
+                <div class="tracking-page" style="max-width: 100%; box-shadow: none;">
+                    <div class="tracking-header">
+                        <h1>📦 Order Tracking</h1>
+                        <p>${isDelivered ? 'Delivery Complete' : 'Your package is on its way'}</p>
+                    </div>
+
+                    ${deliveryBanner}
+
+                    <div class="order-info">
+                        <div class="order-info-grid">
+                            <div class="info-item">
+                                <div class="info-label">Customer</div>
+                                <div class="info-value">${data.customerName}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Order Number</div>
+                                <div class="info-value">${data.orderNumber}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Tracking Number</div>
+                                <div class="info-value">${data.trackingNumber}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Carrier</div>
+                                <div class="info-value">${data.carrier || 'Standard Shipping'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Destination</div>
+                                <div class="info-value">${data.destination}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${carrierTrackingButton}
+                    ${currentStatusMessage}
+
+                    <div class="timeline">
+                        ${eventsHtml}
+                    </div>
+
+                    <div class="alert alert-info" style="margin-top: 30px;">
+                        <strong>ℹ️ Tracking Information:</strong> 
+                        ${isDelivered 
+                            ? 'This package has been delivered as confirmed by our delivery tracking system.' 
+                            : `This status is updated every 3-4 days as your package moves through our shipping network. ${data.fulfillmentStatus === 'fulfilled' ? 'Your order has been fulfilled and is in transit.' : 'Your order is being processed.'}`
+                        }
+                    </div>
+
+                    <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e1e8ed; color: #888; font-size: 14px;">
+                        Last updated: ${new Date(data.lastUpdated || data.createdAt).toLocaleString()}
+                        ${isDelivered ? '<br><span style="color: #4CAF50;">✓ Delivery Status: Confirmed</span>' : '<br><span style="color: #2196F3;">⏱ Status: In Transit</span>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Copy link to clipboard and save to Firebase
+        async function copyLink() {
+            const linkInput = document.getElementById('generatedLink');
+            const copyButton = document.getElementById('copyButton');
+            const pageStatus = document.getElementById('pageStatus');
+            
+            try {
+                // Copy to clipboard
+                linkInput.select();
+                document.execCommand('copy');
+                
+                // If not already saved, save to Firebase
+                if (!isPageSaved && currentPageId) {
+                    // Update button state
+                    copyButton.textContent = 'Saving...';
+                    copyButton.className = 'copy-btn saving';
+                    copyButton.disabled = true;
+                    
+                    // Save to Firebase
+                    const response = await fetch(`${API_BASE_URL}/api/save-status-page/${currentPageId}`, {
+                        method: 'POST'
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        isPageSaved = true;
+                        
+                        // Update UI to show saved state
+                        copyButton.textContent = 'Copied & Saved!';
+                        copyButton.className = 'copy-btn saved';
+                        pageStatus.textContent = '🔥 Saved to Firebase - Link is permanent';
+                        pageStatus.className = 'page-status saved';
+                        
+                        // Show success message
+                        showSuccessMessage('✓ Link copied and saved to Firebase!');
+                        
+                        // Reset button after 3 seconds
+                        setTimeout(() => {
+                            copyButton.textContent = 'Copy';
+                            copyButton.className = 'copy-btn';
+                            copyButton.disabled = false;
+                        }, 3000);
+                    } else {
+                        throw new Error('Failed to save to Firebase');
+                    }
+                } else {
+                    // Already saved, just copy
+                    showSuccessMessage('✓ Link copied to clipboard!');
+                }
+                
+            } catch (error) {
+                console.error('Error saving to Firebase:', error);
+                
+                // Reset button state
+                copyButton.textContent = 'Copy';
+                copyButton.className = 'copy-btn';
+                copyButton.disabled = false;
+                
+                // Still show success for clipboard copy
+                showSuccessMessage('✓ Link copied! (Warning: Could not save to Firebase)');
+            }
+        }
+
+        // Helper function to reset copy button state
+        function resetCopyButton() {
+            const copyButton = document.getElementById('copyButton');
+            const pageStatus = document.getElementById('pageStatus');
+            
+            copyButton.textContent = 'Copy & Save';
+            copyButton.className = 'copy-btn';
+            copyButton.disabled = false;
+            
+            pageStatus.textContent = '📄 Temporary - Copy link to save permanently';
+            pageStatus.className = 'page-status temporary';
+        }
+
+        // Helper function to show success messages
+        function showSuccessMessage(message) {
+            const successMsg = document.getElementById('successMessage');
+            successMsg.textContent = message;
+            successMsg.style.display = 'block';
+            setTimeout(() => {
+                successMsg.style.display = 'none';
+            }, 4000);
+        }
+
+        // Reset form
+        function resetForm() {
+            document.getElementById('orderForm').reset();
+            document.getElementById('previewSection').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'none';
+            
+            // Reset global variables
+            currentPageId = null;
+            isPageSaved = false;
+        }
+
+        // Load tracking page if track parameter is present
+        window.addEventListener('DOMContentLoaded', async function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const trackId = urlParams.get('track');
+            
+            if (trackId) {
+                // Hide admin panel
+                document.getElementById('adminPanel').style.display = 'none';
+                
+                try {
+                    // Fetch tracking data from backend (this will auto-update from Shopify)
+                    const response = await fetch(`${API_BASE_URL}/api/status/${trackId}`);
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Create and display tracking page
+                        const trackingPageContainer = document.createElement('div');
+                        trackingPageContainer.innerHTML = generateTrackingPageHTML(result.data);
+                        document.querySelector('.container').appendChild(trackingPageContainer.firstElementChild);
+                        
+                        // Update page title
+                        document.title = `Order ${result.data.orderNumber} - Tracking Status`;
+                    } else {
+                        // Show error page
+                        showTrackingError();
+                    }
+                } catch (error) {
+                    console.error('Error loading tracking page:', error);
+                    showTrackingError();
+                }
+            }
+        });
+
+        // Show tracking error page
+        function showTrackingError() {
+            document.querySelector('.container').innerHTML = `
+                <div class="tracking-page">
+                    <div class="tracking-header">
+                        <h1>❌ Status Page Not Found</h1>
+                        <p>This tracking page may have expired or the link is incorrect.</p>
+                    </div>
+                    <div class="alert alert-error">
+                        <strong>Unable to Load Tracking Information</strong><br>
+                        This could happen if:
+                        <ul style="margin: 10px 0 0 20px;">
+                            <li>The tracking link has expired</li>
+                            <li>The page ID is incorrect</li>
+                            <li>The backend server is not running</li>
+                        </ul>
+                        Please contact customer support for assistance with your order.
+                    </div>
+                </div>
+            `;
+        }
+
+        // Auto-refresh tracking page every 5 minutes if viewing a tracking page
+        if (new URLSearchParams(window.location.search).get('track')) {
+            setInterval(() => {
+                window.location.reload();
+            }, 5 * 60 * 1000); // 5 minutes
+        }
+    </script>
+</body>
+</html>
