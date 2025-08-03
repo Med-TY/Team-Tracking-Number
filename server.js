@@ -1,12 +1,27 @@
-// server.js - Updated Node.js backend with Firebase integration
+// server.js - Updated Node.js backend with Firebase integration and authentication
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const crypto = require('crypto');
+const session = require('express-session');
 require('dotenv').config();
+
+
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Session configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+        secure: false, // Set to true if using HTTPS
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
 
 // Initialize Firebase Admin SDK with better error handling
 let db = null;
@@ -54,7 +69,17 @@ try {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
+
+// Authentication middleware
+function requireAuth(req, res, next) {
+    if (req.session && req.session.authenticated) {
+        return next();
+    } else {
+        return res.redirect('/login');
+    }
+}
 
 // Store for temporary status pages (before saving to Firebase)
 const tempStatusPages = new Map();
@@ -126,6 +151,22 @@ const majorTransitHubs = [
 const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_API_VERSION = '2024-01';
+
+// Helper function to subtract business days (excluding weekends)
+function subtractBusinessDays(date, days) {
+    const result = new Date(date);
+    let subtractedDays = 0;
+    
+    while (subtractedDays < days) {
+        result.setDate(result.getDate() - 1);
+        // Skip weekends (0 = Sunday, 6 = Saturday)
+        if (result.getDay() !== 0 && result.getDay() !== 6) {
+            subtractedDays++;
+        }
+    }
+    
+    return result;
+}
 
 // Helper function to add business days (excluding weekends)
 function addBusinessDays(date, days) {
@@ -235,155 +276,8 @@ async function fetchShopifyOrder(orderNumber) {
         };
     }
 }
-// Replace the generateRealisticTrackingEvents function with this final version
-function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate) {
-    const events = [];
-    const today = new Date();
-    const orderDateObj = new Date(orderDate);
-    
-    // Get appropriate facilities for the destination state
-    const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
-    const destinationFacility = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
-    
-    // REAL DATES FROM YOUR SHOPIFY DATA:
-    // 1. Order Confirmed = Original order creation date (July 19, 2025 at 2:33 pm)
-    const orderConfirmedDate = new Date(orderDateObj);
-    
-    // 2. Find the latest fulfillment date to use as "Label Created" date
-    let labelCreatedDate = new Date(today); // Default to today if no fulfillments
-    
-    // In the API endpoint, we'll need to pass fulfillment data, but for now use today
-    // This will be updated when we modify the API call
-    
-    // Event templates with specific dates
-    const eventTemplates = [
-        { 
-            status: 'Order Confirmed', 
-            location: 'Order Processing Center', 
-            fixedDate: orderConfirmedDate 
-        },
-        { 
-            status: 'Order Processed', 
-            location: 'Fulfillment Center', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Label Created', 
-            location: 'Origin Facility', 
-            fixedDate: labelCreatedDate // This will be the fulfillment date
-        },
-        { 
-            status: 'Package Picked Up', 
-            location: 'Local Pickup Facility', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Departed Origin Facility', 
-            location: 'Origin Facility', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'In Transit', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Arrived at Sorting Facility', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Departed Sorting Facility', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Arrived at Destination Facility', 
-            location: destinationFacility, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Out for Delivery', 
-            location: `${destinationCity}, ${provinceCode}`, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        }
-    ];
-    
-    // Calculate event dates
-    let currentEventDate = orderDateObj;
-    
-    for (let i = 0; i < eventTemplates.length; i++) {
-        const template = eventTemplates[i];
-        
-        // Use fixed date if specified, otherwise calculate from previous event
-        if (template.fixedDate) {
-            currentEventDate = new Date(template.fixedDate);
-        } else if (i > 0) {
-            // Calculate from previous event date using business days
-            currentEventDate = addBusinessDays(currentEventDate, template.businessDaysFromPrevious);
-        }
-        
-        // Skip events that are in the future
-        if (currentEventDate > today) {
-            break;
-        }
-        
-        let location = template.location;
-        
-        // For transit events, pick random locations
-        if (!location) {
-            if (template.status.includes('Transit')) {
-                location = majorTransitHubs[Math.floor(Math.random() * majorTransitHubs.length)];
-            } else if (template.status.includes('Sorting')) {
-                location = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
-            }
-        }
-        
-        events.push({
-            status: template.status,
-            date: currentEventDate.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
-            }),
-            time: generateRealisticTime(currentEventDate, template.status),
-            location: location,
-            completed: true, // All past events are completed
-            current: false, // Will be set below for the last event
-            isDelivered: false
-        });
-    }
-    
-    // Mark the last event as current (if not delivered)
-    if (events.length > 0 && !isDelivered) {
-        events[events.length - 1].current = true;
-        events[events.length - 1].completed = false; // Current event is not yet completed
-    }
-    
-    // Add delivered event if actually delivered in Shopify
-    if (isDelivered && deliveryDate) {
-        const actualDeliveryDate = new Date(deliveryDate);
-        events.push({
-            status: 'Delivered',
-            date: actualDeliveryDate.toLocaleDateString('en-US', { 
-                weekday: 'short', 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
-            }),
-            time: generateRealisticTime(actualDeliveryDate, 'Delivered'),
-            location: `${destinationCity}, ${provinceCode}`,
-            completed: true,
-            current: false,
-            isDelivered: true
-        });
-    }
-    
-    return events;
-}
 
-// Updated function to handle fulfillment dates properly
+// Updated function to handle fulfillment dates properly with Label Created 2 days before
 function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments) {
     const events = [];
     const today = new Date();
@@ -397,14 +291,16 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
     // 1. Order Confirmed = Original order creation date 
     const orderConfirmedDate = new Date(orderDateObj);
     
-    // 2. Label Created = Latest fulfillment date with tracking
+    // 2. Label Created = 2 business days BEFORE the fulfillment date
     let labelCreatedDate = new Date(today); // Default to today
     
     // Find the fulfillment with tracking number (the actual shipment)
     if (fulfillments && fulfillments.length > 0) {
         const shipmentFulfillment = fulfillments.find(f => f.tracking_number || f.tracking_numbers?.length > 0);
         if (shipmentFulfillment) {
-            labelCreatedDate = new Date(shipmentFulfillment.created_at);
+            const fulfillmentDate = new Date(shipmentFulfillment.created_at);
+            // Subtract 2 business days from fulfillment date
+            labelCreatedDate = subtractBusinessDays(fulfillmentDate, 2);
         }
     }
     
@@ -423,7 +319,7 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
         { 
             status: 'Label Created', 
             location: 'Origin Facility', 
-            fixedDate: labelCreatedDate 
+            fixedDate: labelCreatedDate // 2 days before fulfillment
         },
         { 
             status: 'Package Picked Up', 
@@ -534,45 +430,6 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
     }
     
     return events;
-}
-
-
-// Helper function to create an event with more realistic timing
-function createEvent(status, date, location, eventIndex, daysDiff, isDelivered = false) {
-    const eventDate = new Date(date);
-    const today = new Date();
-    
-    // Make the last update closer to today for more realistic feel
-    if (!isDelivered && eventIndex > 0) {
-        const maxDaysAgo = Math.min(3, Math.max(1, Math.floor(daysDiff / 4)));
-        const randomDaysAgo = Math.floor(Math.random() * maxDaysAgo);
-        const recentDate = new Date(today);
-        recentDate.setDate(recentDate.getDate() - randomDaysAgo);
-        
-        // Use more recent date for later events
-        if (eventDate > recentDate && Math.random() > 0.3) {
-            eventDate.setTime(recentDate.getTime());
-        }
-    }
-    
-    // Determine if this event has occurred
-    const hasOccurred = eventDate <= today;
-    const isCurrentEvent = !hasOccurred && !isDelivered;
-    
-    return {
-        status: status,
-        date: eventDate.toLocaleDateString('en-US', { 
-            weekday: 'short', 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
-        }),
-        time: generateRealisticTime(eventDate, status),
-        location: location,
-        completed: hasOccurred || isDelivered,
-        current: isCurrentEvent,
-        isDelivered: isDelivered
-    };
 }
 
 // Helper function to detect carrier and generate tracking URL
@@ -633,7 +490,7 @@ function generateRealisticTime(date, status) {
             hour = Math.floor(Math.random() * 8) + 9; // 9 AM - 5 PM
             break;
         case 'Package Picked Up':
-        case 'Shipment Created':
+        case 'Label Created':
             // Early morning pickup
             hour = Math.floor(Math.random() * 4) + 6; // 6 AM - 10 AM
             break;
@@ -667,8 +524,179 @@ function generateRealisticTime(date, status) {
     return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-// Replace the existing /api/create-status-page endpoint with this updated version
-app.post('/api/create-status-page', async (req, res) => {
+// LOGIN ROUTES
+app.get('/login', (req, res) => {
+    if (req.session && req.session.authenticated) {
+        return res.redirect('/');
+    }
+    
+    res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Order Status Manager</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #1a1a1a;
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        .login-header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #444;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus, input[type="password"]:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        .login-btn {
+            width: 100%;
+            padding: 12px 24px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .login-btn:hover {
+            background: #45a049;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        }
+        .error-message {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🔐 Admin Login</h1>
+            <p>Order Status Manager</p>
+        </div>
+        
+        ${req.query.error ? '<div class="error-message">Invalid username or password</div>' : ''}
+        
+        <form action="/login" method="POST">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit" class="login-btn">Login</button>
+        </form>
+    </div>
+</body>
+</html>
+    `);
+});
+
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+    
+    // Get credentials from environment variables
+    const validUsername = process.env.ADMIN_USERNAME || 'admin';
+    const validPassword = process.env.ADMIN_PASSWORD || 'password';
+    
+    if (username === validUsername && password === validPassword) {
+        req.session.authenticated = true;
+        res.redirect('/');
+    } else {
+        res.redirect('/login?error=1');
+    }
+});
+
+app.get('/logout', (req, res) => {
+    req.session.destroy((err) => {
+        res.redirect('/login');
+    });
+});
+
+// PROTECTED ROUTES (require authentication)
+// Check for tracking parameter and allow public access
+app.get('/', (req, res) => {
+    // If there's a track parameter, allow public access (customer tracking page)
+    if (req.query.track) {
+        return res.sendFile(__dirname + '/public/index.html');
+    }
+    
+    // Otherwise, require authentication for admin panel
+    return requireAuth(req, res, () => {
+        res.sendFile(__dirname + '/public/index.html');
+    });
+});
+
+// Admin dashboard route (alternative path)
+app.get('/admin', requireAuth, (req, res) => {
+    res.redirect('/');
+});
+
+// Favicon route
+app.get('/favicon.ico', (req, res) => {
+    res.sendFile(__dirname + '/public/favicon.ico');
+});
+
+// API endpoints (protected)
+app.post('/api/create-status-page', requireAuth, async (req, res) => {
     const { orderNumber, trackingNumber } = req.body;
 
     if (!orderNumber || !trackingNumber) {
@@ -751,9 +779,8 @@ app.post('/api/create-status-page', async (req, res) => {
     }
 });
 
-
-// NEW API endpoint to save status page to Firebase (called when link is copied)
-app.post('/api/save-status-page/:pageId', async (req, res) => {
+// Other protected API endpoints
+app.post('/api/save-status-page/:pageId', requireAuth, async (req, res) => {
     const { pageId } = req.params;
     
     try {
@@ -803,7 +830,17 @@ app.post('/api/save-status-page/:pageId', async (req, res) => {
     }
 });
 
-// API endpoint to retrieve status page (checks Firebase first, then temp storage)
+app.get('/api/health', requireAuth, (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        shopifyConnected: !!SHOPIFY_SHOP_DOMAIN && !!SHOPIFY_ACCESS_TOKEN,
+        firebaseConnected: firebaseInitialized && !!db,
+        authenticated: true
+    });
+});
+
+// PUBLIC ROUTES (no authentication required)
+// Tracking page route - accessible to customers
 app.get('/api/status/:pageId', async (req, res) => {
     const { pageId } = req.params;
     
@@ -856,12 +893,13 @@ app.get('/api/status/:pageId', async (req, res) => {
                 const carrierInfo = detectCarrierAndGenerateUrl(statusData.trackingNumber);
                 
                 // Regenerate events with updated fulfillment status
-                const updatedEvents = generateRealisticTrackingEvents(
+                const updatedEvents = generateRealisticTrackingEventsWithFulfillment(
                     order.createdAt,
                     order.shippingAddress.city,
                     order.shippingAddress.provinceCode,
                     order.isDelivered,
-                    order.deliveryDate
+                    order.deliveryDate,
+                    order.fulfillments
                 );
                 
                 // Update stored data
@@ -914,13 +952,9 @@ app.get('/api/status/:pageId', async (req, res) => {
     }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
-        shopifyConnected: !!SHOPIFY_SHOP_DOMAIN && !!SHOPIFY_ACCESS_TOKEN,
-        firebaseConnected: firebaseInitialized && !!db
-    });
+// Favicon route
+app.get('/favicon.ico', (req, res) => {
+    res.sendFile(__dirname + '/public/favicon.ico');
 });
 
 // Start server
@@ -928,6 +962,7 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📦 Shopify integration: ${SHOPIFY_SHOP_DOMAIN ? '✅ Connected' : '❌ Not configured'}`);
     console.log(`🔥 Firebase integration: ${firebaseInitialized ? '✅ Connected' : '❌ Not configured'}`);
+    console.log(`🔐 Admin credentials: ${process.env.ADMIN_USERNAME || 'admin'} / ${process.env.ADMIN_PASSWORD ? '***' : 'password'}`);
     
     if (!firebaseInitialized) {
         console.log('');
@@ -940,6 +975,10 @@ app.listen(PORT, () => {
     } else {
         console.log('🎉 Ready to create and save status pages!');
     }
+    
+    console.log('');
+    console.log('🔑 Login at: http://localhost:' + PORT + '/login');
+    console.log('📊 Admin panel: http://localhost:' + PORT + '/');
 });
 
 // Export for testing

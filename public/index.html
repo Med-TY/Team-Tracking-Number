@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Order Status Manager</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
             margin: 0;
@@ -37,6 +38,7 @@
             border-bottom: 2px solid #e1e8ed;
             padding-bottom: 20px;
             margin-bottom: 30px;
+            position: relative;
         }
 
         .admin-header h1 {
@@ -48,6 +50,25 @@
         .admin-header p {
             color: #666;
             margin-top: 8px;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: #dc3545;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.3s;
+        }
+
+        .logout-btn:hover {
+            background: #c82333;
         }
 
         .connection-status {
@@ -510,6 +531,16 @@
             .timeline-icon {
                 left: 10px;
             }
+
+            .admin-header {
+                position: relative;
+            }
+
+            .logout-btn {
+                position: static;
+                margin-top: 15px;
+                display: inline-block;
+            }
         }
     </style>
 </head>
@@ -520,6 +551,7 @@
             <div class="admin-header">
                 <h1>Order Status Update Manager</h1>
                 <p>Create realistic status pages for orders with automatic Shopify integration and Firebase hosting</p>
+                <a href="/logout" class="logout-btn">🔓 Logout</a>
                 <div>
                     <div id="connectionStatus" class="connection-status disconnected">
                         <span class="status-dot"></span>
@@ -538,12 +570,15 @@
                 <ol>
                     <li>Install Node.js on your computer</li>
                     <li>Create a new folder and add the <code>server.js</code> file</li>
-                    <li>Run <code>npm install express axios cors dotenv firebase-admin</code></li>
+                    <li>Run <code>npm install express axios cors dotenv firebase-admin express-session</code></li>
                     <li>Create a <code>.env</code> file with your credentials:
                         <ul style="margin-top: 5px;">
                             <li><code>SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com</code></li>
                             <li><code>SHOPIFY_ACCESS_TOKEN=your_access_token</code></li>
                             <li><code>FIREBASE_SERVICE_ACCOUNT={"type":"service_account",...}</code></li>
+                            <li><code>ADMIN_USERNAME=yourusername</code></li>
+                            <li><code>ADMIN_PASSWORD=yourpassword</code></li>
+                            <li><code>SESSION_SECRET=your-random-secret-key</code></li>
                         </ul>
                     </li>
                     <li>Run <code>npm start</code> to start the server</li>
@@ -551,28 +586,17 @@
                 </ol>
             </div>
 
-    <!--         <div class="alert alert-info">
-                <strong>🔥 Firebase Integration Features:</strong> 
-                <ul style="margin: 10px 0 0 20px;">
-                    <li>✅ Status pages saved to Firebase when you copy the link</li>
-                    <li>✅ Automatic cleanup of pages older than 30 days</li>
-                    <li>✅ Temporary pages expire after 1 hour if not saved</li>
-                    <li>✅ Real-time updates from Shopify every 4 hours</li>
-                    <li>✅ Scalable hosting with Firebase Firestore</li>
-                </ul>
-            </div> -->
-
             <div id="errorMessage" class="alert alert-error" style="display: none;"></div>
 
             <form id="orderForm">
                 <div class="form-group">
                     <label for="orderNumber">Order Number (from Shopify)</label>
-                    <input type="text" id="orderNumber" name="orderNumber" required placeholder="#1234" title="Enter the Shopify order number (e.g., #1234)">
+                    <input type="text" id="orderNumber" name="orderNumber" required placeholder="#PP13397" title="Enter the Shopify order number (e.g., #PP13397)">
                 </div>
 
                 <div class="form-group">
                     <label for="trackingNumber">Tracking Number</label>
-                    <input type="text" id="trackingNumber" name="trackingNumber" required placeholder="1Z999AA10123456784" title="Enter the shipping carrier tracking number">
+                    <input type="text" id="trackingNumber" name="trackingNumber" required placeholder="391564901204" title="Enter the shipping carrier tracking number">
                 </div>
 
                 <div class="button-group">
@@ -613,12 +637,29 @@
         let currentPageId = null;
         let isPageSaved = false;
 
-        // Check backend connection on load
-        checkBackendConnection();
+        // Check if this is a tracking page (public) or admin panel (requires auth)
+        const urlParams = new URLSearchParams(window.location.search);
+        const isTrackingPage = urlParams.get('track');
+        
+        // Check backend connection on load (only for admin panel)
+        if (!isTrackingPage) {
+            checkBackendConnection();
+        }
 
         async function checkBackendConnection() {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/health`);
+                
+                // If response is not ok, might be redirected to login
+                if (!response.ok) {
+                    // Check if we got redirected to login page
+                    if (response.status === 401 || response.url.includes('/login')) {
+                        window.location.href = '/login';
+                        return;
+                    }
+                    throw new Error('Backend connection failed');
+                }
+                
                 const data = await response.json();
                 
                 if (data.status === 'ok') {
@@ -639,12 +680,9 @@
                     document.getElementById('setupInstructions').style.display = 'none';
                 }
             } catch (error) {
-                document.getElementById('connectionStatus').className = 'connection-status disconnected';
-                document.getElementById('connectionText').textContent = 'Backend not connected';
-                document.getElementById('firebaseStatus').className = 'connection-status disconnected';
-                document.getElementById('firebaseText').textContent = 'Firebase unavailable';
-                document.getElementById('setupInstructions').style.display = 'block';
-                document.getElementById('backendUrl').textContent = API_BASE_URL;
+                // If health check fails, redirect to login
+                console.error('Backend connection failed:', error);
+                window.location.href = '/login';
             }
         }
 
@@ -672,6 +710,12 @@
                     },
                     body: JSON.stringify(formData)
                 });
+
+                // Check if we got redirected to login
+                if (!response.ok && (response.status === 401 || response.url.includes('/login'))) {
+                    window.location.href = '/login';
+                    return;
+                }
 
                 const result = await response.json();
 
