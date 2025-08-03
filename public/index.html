@@ -551,7 +551,7 @@
                 </ol>
             </div>
 
-            <div class="alert alert-info">
+    <!--         <div class="alert alert-info">
                 <strong>🔥 Firebase Integration Features:</strong> 
                 <ul style="margin: 10px 0 0 20px;">
                     <li>✅ Status pages saved to Firebase when you copy the link</li>
@@ -560,7 +560,7 @@
                     <li>✅ Real-time updates from Shopify every 4 hours</li>
                     <li>✅ Scalable hosting with Firebase Firestore</li>
                 </ul>
-            </div>
+            </div> -->
 
             <div id="errorMessage" class="alert alert-error" style="display: none;"></div>
 
@@ -853,14 +853,7 @@
                         ${eventsHtml}
                     </div>
 
-                    <div class="alert alert-info" style="margin-top: 30px;">
-                        <strong>ℹ️ Tracking Information:</strong> 
-                        ${isDelivered 
-                            ? 'This package has been delivered as confirmed by our delivery tracking system.' 
-                            : `This status is updated every 3-4 days as your package moves through our shipping network. ${data.fulfillmentStatus === 'fulfilled' ? 'Your order has been fulfilled and is in transit.' : 'Your order is being processed.'}`
-                        }
-                    </div>
-
+  
                     <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e1e8ed; color: #888; font-size: 14px;">
                         Last updated: ${new Date(data.lastUpdated || data.createdAt).toLocaleString()}
                         ${isDelivered ? '<br><span style="color: #4CAF50;">✓ Delivery Status: Confirmed</span>' : '<br><span style="color: #2196F3;">⏱ Status: In Transit</span>'}

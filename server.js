@@ -127,17 +127,54 @@ const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_API_VERSION = '2024-01';
 
+// Helper function to add business days (excluding weekends)
+function addBusinessDays(date, days) {
+    const result = new Date(date);
+    let addedDays = 0;
+    
+    while (addedDays < days) {
+        result.setDate(result.getDate() + 1);
+        // Skip weekends (0 = Sunday, 6 = Saturday)
+        if (result.getDay() !== 0 && result.getDay() !== 6) {
+            addedDays++;
+        }
+    }
+    
+    return result;
+}
+
+// Helper function to get random business days interval (3-5 days)
+function getRandomBusinessDaysInterval() {
+    return Math.floor(Math.random() * 3) + 3; // Random number between 3-5
+}
+
 // Helper function to fetch order from Shopify
 async function fetchShopifyOrder(orderNumber) {
     try {
-        const searchUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json?name=${orderNumber}&status=any`;
+        // Clean order number - remove # if present and handle both formats
+        const cleanOrderNumber = orderNumber.replace('#', '');
         
-        const response = await axios.get(searchUrl, {
+        // Try searching with # first, then without
+        let searchUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json?name=%23${cleanOrderNumber}&status=any`;
+        
+        let response = await axios.get(searchUrl, {
             headers: {
                 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
                 'Content-Type': 'application/json'
             }
         });
+
+        // If not found with #, try without #
+        if (!response.data.orders || response.data.orders.length === 0) {
+            searchUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json?name=${cleanOrderNumber}&status=any`;
+            
+            response = await axios.get(searchUrl, {
+                headers: {
+                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                }
+            });
+        }
 
         if (response.data.orders && response.data.orders.length > 0) {
             const order = response.data.orders[0];
@@ -198,66 +235,96 @@ async function fetchShopifyOrder(orderNumber) {
         };
     }
 }
-
-// FIXED: Generate realistic tracking events with proper date progression
+// Replace the generateRealisticTrackingEvents function with this final version
 function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate) {
     const events = [];
     const today = new Date();
-    const startDate = new Date(orderDate);
-    
-    // Calculate days between order and today
-    const daysDiff = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-    
-    // Determine how many events should be shown based on days passed
-    let eventsToShow;
-    if (daysDiff <= 0) {
-        eventsToShow = 1; // Just order confirmed
-    } else if (daysDiff <= 2) {
-        eventsToShow = 2; // Order confirmed + processed
-    } else if (daysDiff <= 4) {
-        eventsToShow = 3; // + shipment created
-    } else if (daysDiff <= 6) {
-        eventsToShow = 4; // + package picked up
-    } else if (daysDiff <= 8) {
-        eventsToShow = 5; // + departed origin
-    } else if (daysDiff <= 10) {
-        eventsToShow = 6; // + in transit
-    } else if (daysDiff <= 12) {
-        eventsToShow = 7; // + arrived at sorting
-    } else if (daysDiff <= 14) {
-        eventsToShow = 8; // + departed sorting
-    } else {
-        eventsToShow = 9; // + arrived at destination / out for delivery
-    }
+    const orderDateObj = new Date(orderDate);
     
     // Get appropriate facilities for the destination state
     const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
     const destinationFacility = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
     
-    // All possible event templates
+    // REAL DATES FROM YOUR SHOPIFY DATA:
+    // 1. Order Confirmed = Original order creation date (July 19, 2025 at 2:33 pm)
+    const orderConfirmedDate = new Date(orderDateObj);
+    
+    // 2. Find the latest fulfillment date to use as "Label Created" date
+    let labelCreatedDate = new Date(today); // Default to today if no fulfillments
+    
+    // In the API endpoint, we'll need to pass fulfillment data, but for now use today
+    // This will be updated when we modify the API call
+    
+    // Event templates with specific dates
     const eventTemplates = [
-        { status: 'Order Confirmed', location: 'Order Processing Center', dayOffset: 0 },
-        { status: 'Order Processed', location: 'Fulfillment Center', dayOffset: 1 },
-        { status: 'Shipment Created', location: 'Origin Facility', dayOffset: 2 },
-        { status: 'Package Picked Up', location: 'Local Pickup Facility', dayOffset: 3 },
-        { status: 'Departed Origin Facility', location: 'Origin Facility', dayOffset: 4 },
-        { status: 'In Transit', location: null, dayOffset: 6 }, // Will be random transit hub
-        { status: 'Arrived at Sorting Facility', location: null, dayOffset: 8 }, // Will be random facility
-        { status: 'Departed Sorting Facility', location: null, dayOffset: 10 },
-        { status: 'Arrived at Destination Facility', location: destinationFacility, dayOffset: 12 },
-        { status: 'Out for Delivery', location: `${destinationCity}, ${provinceCode}`, dayOffset: 14 }
+        { 
+            status: 'Order Confirmed', 
+            location: 'Order Processing Center', 
+            fixedDate: orderConfirmedDate 
+        },
+        { 
+            status: 'Order Processed', 
+            location: 'Fulfillment Center', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Label Created', 
+            location: 'Origin Facility', 
+            fixedDate: labelCreatedDate // This will be the fulfillment date
+        },
+        { 
+            status: 'Package Picked Up', 
+            location: 'Local Pickup Facility', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Departed Origin Facility', 
+            location: 'Origin Facility', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'In Transit', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Arrived at Sorting Facility', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Departed Sorting Facility', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Arrived at Destination Facility', 
+            location: destinationFacility, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Out for Delivery', 
+            location: `${destinationCity}, ${provinceCode}`, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        }
     ];
     
-    // Generate events up to what should be shown by now
-    for (let i = 0; i < Math.min(eventsToShow, eventTemplates.length); i++) {
+    // Calculate event dates
+    let currentEventDate = orderDateObj;
+    
+    for (let i = 0; i < eventTemplates.length; i++) {
         const template = eventTemplates[i];
         
-        // Calculate the event date (order date + day offset)
-        const eventDate = new Date(startDate);
-        eventDate.setDate(eventDate.getDate() + template.dayOffset);
+        // Use fixed date if specified, otherwise calculate from previous event
+        if (template.fixedDate) {
+            currentEventDate = new Date(template.fixedDate);
+        } else if (i > 0) {
+            // Calculate from previous event date using business days
+            currentEventDate = addBusinessDays(currentEventDate, template.businessDaysFromPrevious);
+        }
         
         // Skip events that are in the future
-        if (eventDate > today) {
+        if (currentEventDate > today) {
             break;
         }
         
@@ -272,23 +339,26 @@ function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCod
             }
         }
         
-        // Determine if this is the current event (last one in the list)
-        const isCurrentEvent = (i === eventsToShow - 1) && !isDelivered;
-        
         events.push({
             status: template.status,
-            date: eventDate.toLocaleDateString('en-US', { 
+            date: currentEventDate.toLocaleDateString('en-US', { 
                 weekday: 'short', 
                 year: 'numeric', 
                 month: 'short', 
                 day: 'numeric' 
             }),
-            time: generateRealisticTime(eventDate, template.status),
+            time: generateRealisticTime(currentEventDate, template.status),
             location: location,
-            completed: true, // All shown events are completed
-            current: isCurrentEvent,
+            completed: true, // All past events are completed
+            current: false, // Will be set below for the last event
             isDelivered: false
         });
+    }
+    
+    // Mark the last event as current (if not delivered)
+    if (events.length > 0 && !isDelivered) {
+        events[events.length - 1].current = true;
+        events[events.length - 1].completed = false; // Current event is not yet completed
     }
     
     // Add delivered event if actually delivered in Shopify
@@ -312,6 +382,160 @@ function generateRealisticTrackingEvents(orderDate, destinationCity, provinceCod
     
     return events;
 }
+
+// Updated function to handle fulfillment dates properly
+function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments) {
+    const events = [];
+    const today = new Date();
+    const orderDateObj = new Date(orderDate);
+    
+    // Get appropriate facilities for the destination state
+    const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
+    const destinationFacility = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
+    
+    // REAL DATES FROM YOUR SHOPIFY DATA:
+    // 1. Order Confirmed = Original order creation date 
+    const orderConfirmedDate = new Date(orderDateObj);
+    
+    // 2. Label Created = Latest fulfillment date with tracking
+    let labelCreatedDate = new Date(today); // Default to today
+    
+    // Find the fulfillment with tracking number (the actual shipment)
+    if (fulfillments && fulfillments.length > 0) {
+        const shipmentFulfillment = fulfillments.find(f => f.tracking_number || f.tracking_numbers?.length > 0);
+        if (shipmentFulfillment) {
+            labelCreatedDate = new Date(shipmentFulfillment.created_at);
+        }
+    }
+    
+    // Event templates with your specific dates
+    const eventTemplates = [
+        { 
+            status: 'Order Confirmed', 
+            location: 'Order Processing Center', 
+            fixedDate: orderConfirmedDate 
+        },
+        { 
+            status: 'Order Processed', 
+            location: 'Fulfillment Center', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Label Created', 
+            location: 'Origin Facility', 
+            fixedDate: labelCreatedDate 
+        },
+        { 
+            status: 'Package Picked Up', 
+            location: 'Local Pickup Facility', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Departed Origin Facility', 
+            location: 'Origin Facility', 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'In Transit', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Arrived at Sorting Facility', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Departed Sorting Facility', 
+            location: null, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Arrived at Destination Facility', 
+            location: destinationFacility, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        },
+        { 
+            status: 'Out for Delivery', 
+            location: `${destinationCity}, ${provinceCode}`, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+        }
+    ];
+    
+    // Calculate event dates
+    let currentEventDate = orderDateObj;
+    
+    for (let i = 0; i < eventTemplates.length; i++) {
+        const template = eventTemplates[i];
+        
+        // Use fixed date if specified, otherwise calculate from previous event
+        if (template.fixedDate) {
+            currentEventDate = new Date(template.fixedDate);
+        } else if (i > 0) {
+            // Calculate from previous event date using business days
+            currentEventDate = addBusinessDays(currentEventDate, template.businessDaysFromPrevious);
+        }
+        
+        // Skip events that are in the future
+        if (currentEventDate > today) {
+            break;
+        }
+        
+        let location = template.location;
+        
+        // For transit events, pick random locations
+        if (!location) {
+            if (template.status.includes('Transit')) {
+                location = majorTransitHubs[Math.floor(Math.random() * majorTransitHubs.length)];
+            } else if (template.status.includes('Sorting')) {
+                location = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
+            }
+        }
+        
+        events.push({
+            status: template.status,
+            date: currentEventDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            time: generateRealisticTime(currentEventDate, template.status),
+            location: location,
+            completed: true, // All past events are completed
+            current: false, // Will be set below for the last event
+            isDelivered: false
+        });
+    }
+    
+    // Mark the last event as current (if not delivered)
+    if (events.length > 0 && !isDelivered) {
+        events[events.length - 1].current = true;
+        events[events.length - 1].completed = false; // Current event is not yet completed
+    }
+    
+    // Add delivered event if actually delivered in Shopify
+    if (isDelivered && deliveryDate) {
+        const actualDeliveryDate = new Date(deliveryDate);
+        events.push({
+            status: 'Delivered',
+            date: actualDeliveryDate.toLocaleDateString('en-US', { 
+                weekday: 'short', 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            }),
+            time: generateRealisticTime(actualDeliveryDate, 'Delivered'),
+            location: `${destinationCity}, ${provinceCode}`,
+            completed: true,
+            current: false,
+            isDelivered: true
+        });
+    }
+    
+    return events;
+}
+
 
 // Helper function to create an event with more realistic timing
 function createEvent(status, date, location, eventIndex, daysDiff, isDelivered = false) {
@@ -443,7 +667,7 @@ function generateRealisticTime(date, status) {
     return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-// API endpoint to create status page (stores temporarily, not in Firebase yet)
+// Replace the existing /api/create-status-page endpoint with this updated version
 app.post('/api/create-status-page', async (req, res) => {
     const { orderNumber, trackingNumber } = req.body;
 
@@ -467,13 +691,14 @@ app.post('/api/create-status-page', async (req, res) => {
         // Detect carrier and generate tracking URL
         const carrierInfo = detectCarrierAndGenerateUrl(trackingNumber);
         
-        // Generate realistic tracking events
-        const trackingEvents = generateRealisticTrackingEvents(
+        // Generate realistic tracking events with fulfillment data
+        const trackingEvents = generateRealisticTrackingEventsWithFulfillment(
             order.createdAt,
             order.shippingAddress.city,
             order.shippingAddress.provinceCode,
             order.isDelivered,
-            order.deliveryDate
+            order.deliveryDate,
+            order.fulfillments // Pass fulfillment data for real dates
         );
 
         // Create status page data
@@ -525,6 +750,7 @@ app.post('/api/create-status-page', async (req, res) => {
         });
     }
 });
+
 
 // NEW API endpoint to save status page to Firebase (called when link is copied)
 app.post('/api/save-status-page/:pageId', async (req, res) => {
