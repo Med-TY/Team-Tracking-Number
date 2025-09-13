@@ -434,21 +434,23 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
 
 // Helper function to detect carrier and generate tracking URL
 function detectCarrierAndGenerateUrl(trackingNumber) {
-    const carriers = {
+   
+
+      const carriers = {
         'UPS': {
             pattern: /^1Z[0-9A-Z]{16}$/,
             url: `https://www.ups.com/track?track=yes&trackNums=${trackingNumber}`,
             name: 'UPS'
         },
+        'USPS': {
+            pattern: /^(94|93|92|91|90|82|81|80|70|23|13|03|04)\d{18,20}$/,
+            url: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
+            name: 'USPS'
+        },
         'FedEx': {
             pattern: /^(\d{12}|\d{14}|\d{15}|\d{20}|\d{22})$/,
             url: `https://www.fedex.com/fedextrack/?tracknumber=${trackingNumber}`,
             name: 'FedEx'
-        },
-        'USPS': {
-            pattern: /^(94|93|92|91|90|82|81|80|23|13|03|04|70|23|03)\d+$/,
-            url: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
-            name: 'USPS'
         },
         'DHL': {
             pattern: /^(\d{10}|\d{11})$/,
@@ -478,6 +480,7 @@ function detectCarrierAndGenerateUrl(trackingNumber) {
         trackingUrl: `https://www.google.com/search?q=track+package+${trackingNumber}`,
         carrierCode: 'UNKNOWN'
     };
+
 }
 
 function generateRealisticTime(date, status) {
