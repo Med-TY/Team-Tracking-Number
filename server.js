@@ -6,20 +6,19 @@ const crypto = require('crypto');
 const session = require('express-session');
 require('dotenv').config();
 
-
-
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Session configuration
+// Session configuration with longer expiration
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
     resave: false,
     saveUninitialized: false,
     cookie: { 
         secure: false, // Set to true if using HTTPS
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days instead of 24 hours
+        httpOnly: true // Security improvement
     }
 }));
 
@@ -59,7 +58,7 @@ try {
     }
 } catch (error) {
     console.error('❌ Error initializing Firebase:', error.message);
-    console.log('📝 Tips to fix this:');
+    console.log('🔧 Tips to fix this:');
     console.log('1. Make sure your .env file has FIREBASE_SERVICE_ACCOUNT with valid JSON');
     console.log('2. The private key should have \\n for line breaks (copy exactly from downloaded file)');
     console.log('3. Make sure the JSON is valid (use a JSON validator)');
@@ -189,6 +188,10 @@ function getRandomBusinessDaysInterval() {
     return Math.floor(Math.random() * 3) + 3; // Random number between 3-5
 }
 
+
+
+
+
 // Helper function to fetch order from Shopify
 async function fetchShopifyOrder(orderNumber) {
     try {
@@ -277,8 +280,8 @@ async function fetchShopifyOrder(orderNumber) {
     }
 }
 
-// Updated function to handle fulfillment dates properly with Label Created 2 days before
-function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments) {
+// Updated function to handle fulfillment dates properly with Label Created 2 days before and optional custom pickup date
+function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null) {
     const events = [];
     const today = new Date();
     const orderDateObj = new Date(orderDate);
@@ -291,72 +294,112 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
     // 1. Order Confirmed = Original order creation date 
     const orderConfirmedDate = new Date(orderDateObj);
     
-    // 2. Label Created = 2 business days BEFORE the fulfillment date
+    // 2. Label Created = 2 business days BEFORE the fulfillment date (or pickup date if custom)
     let labelCreatedDate = new Date(today); // Default to today
     
-    // Find the fulfillment with tracking number (the actual shipment)
+    // 3. Package Picked Up = Custom pickup date if provided, otherwise calculated
+    let packagePickupDate = null;
+    
+// In the generateRealisticTrackingEventsWithFulfillment function, 
+// replace the automatic date calculation section with this:
+
+// Replace the existing date calculation logic with this:
+if (customPickupDate) {
+    // Use custom pickup date
+    packagePickupDate = new Date(customPickupDate);
+    // Set label created to 1-2 business days before pickup, but never before order date
+    labelCreatedDate = subtractBusinessDays(packagePickupDate, Math.floor(Math.random() * 2) + 1);
+    
+    // Ensure label date is not before order date
+    if (labelCreatedDate <= orderDateObj) {
+        labelCreatedDate = addBusinessDays(orderDateObj, 1); // Day after order
+    }
+} else {
+    // AUTOMATIC DATE LOGIC - ensure chronological order starting from order date
+    
+    // Label Created = 1-3 business days AFTER order date
+    labelCreatedDate = addBusinessDays(orderDateObj, Math.floor(Math.random() * 3) + 1);
+    
+    // Package Picked Up = 1-2 business days AFTER label created
+    packagePickupDate = addBusinessDays(labelCreatedDate, Math.floor(Math.random() * 2) + 1);
+    
+    // If we have fulfillment data, we can use it as a reference but still maintain logical order
     if (fulfillments && fulfillments.length > 0) {
         const shipmentFulfillment = fulfillments.find(f => f.tracking_number || f.tracking_numbers?.length > 0);
         if (shipmentFulfillment) {
             const fulfillmentDate = new Date(shipmentFulfillment.created_at);
-            // Subtract 2 business days from fulfillment date
-            labelCreatedDate = subtractBusinessDays(fulfillmentDate, 2);
+            
+            // If fulfillment date is reasonable (not too far from order), adjust our dates
+            const daysBetweenOrderAndFulfillment = Math.floor((fulfillmentDate - orderDateObj) / (1000 * 60 * 60 * 24));
+            
+            if (daysBetweenOrderAndFulfillment > 0 && daysBetweenOrderAndFulfillment < 30) {
+                // Use fulfillment as reference point, working backwards logically
+                packagePickupDate = subtractBusinessDays(fulfillmentDate, 1); // Day before fulfillment
+                labelCreatedDate = subtractBusinessDays(packagePickupDate, Math.floor(Math.random() * 2) + 1);
+                
+                // But never allow label date to be before or same as order date
+                if (labelCreatedDate <= orderDateObj) {
+                    labelCreatedDate = addBusinessDays(orderDateObj, 1);
+                    packagePickupDate = addBusinessDays(labelCreatedDate, 1);
+                }
+            }
         }
     }
+}
     
-    // Event templates with your specific dates
-    const eventTemplates = [
-        { 
-            status: 'Order Confirmed', 
-            location: 'Order Processing Center', 
-            fixedDate: orderConfirmedDate 
-        },
-        { 
-            status: 'Order Processed', 
-            location: 'Fulfillment Center', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Label Created', 
-            location: 'Origin Facility', 
-            fixedDate: labelCreatedDate // 2 days before fulfillment
-        },
-        { 
-            status: 'Package Picked Up', 
-            location: 'Local Pickup Facility', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Departed Origin Facility', 
-            location: 'Origin Facility', 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'In Transit', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Arrived at Sorting Facility', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Departed Sorting Facility', 
-            location: null, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Arrived at Destination Facility', 
-            location: destinationFacility, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        },
-        { 
-            status: 'Out for Delivery', 
-            location: `${destinationCity}, ${provinceCode}`, 
-            businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-        }
-    ];
+ // Event templates with corrected date logic
+const eventTemplates = [
+    { 
+        status: 'Order Confirmed', 
+        location: 'Order Processing Center', 
+        fixedDate: orderConfirmedDate 
+    },
+    { 
+        status: 'Order Processed', 
+        location: 'Fulfillment Center', 
+        fixedDate: addBusinessDays(orderConfirmedDate, Math.floor(Math.random() * 2) + 1) // 1-2 days after order
+    },
+    { 
+        status: 'Label Created', 
+        location: 'Origin Facility', 
+        fixedDate: labelCreatedDate
+    },
+    { 
+        status: 'Package Picked Up', 
+        location: 'Local Pickup Facility', 
+        fixedDate: packagePickupDate
+    },
+    { 
+        status: 'Departed Origin Facility', 
+        location: 'Origin Facility', 
+        businessDaysFromPrevious: 1 // 1 day after pickup
+    },
+    { 
+        status: 'In Transit', 
+        location: null, 
+        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    },
+    { 
+        status: 'Arrived at Sorting Facility', 
+        location: null, 
+        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    },
+    { 
+        status: 'Departed Sorting Facility', 
+        location: null, 
+        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    },
+    { 
+        status: 'Arrived at Destination Facility', 
+        location: destinationFacility, 
+        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    },
+    { 
+        status: 'Out for Delivery', 
+        location: `${destinationCity}, ${provinceCode}`, 
+        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    }
+];
     
     // Calculate event dates
     let currentEventDate = orderDateObj;
@@ -400,7 +443,8 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
             location: location,
             completed: true, // All past events are completed
             current: false, // Will be set below for the last event
-            isDelivered: false
+            isDelivered: false,
+            isCustomPickup: template.status === 'Package Picked Up' && customPickupDate // Flag for custom pickup events
         });
     }
     
@@ -434,9 +478,7 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
 
 // Helper function to detect carrier and generate tracking URL
 function detectCarrierAndGenerateUrl(trackingNumber) {
-   
-
-      const carriers = {
+    const carriers = {
         'UPS': {
             pattern: /^1Z[0-9A-Z]{16}$/,
             url: `https://www.ups.com/track?track=yes&trackNums=${trackingNumber}`,
@@ -480,7 +522,6 @@ function detectCarrierAndGenerateUrl(trackingNumber) {
         trackingUrl: `https://www.google.com/search?q=track+package+${trackingNumber}`,
         carrierCode: 'UNKNOWN'
     };
-
 }
 
 function generateRealisticTime(date, status) {
@@ -635,18 +676,23 @@ app.get('/login', (req, res) => {
         ${req.query.error ? '<div class="error-message">Invalid username or password</div>' : ''}
         
         <form action="/login" method="POST">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required>
-            </div>
-            
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            
-            <button type="submit" class="login-btn">Login</button>
-        </form>
+    <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required>
+    </div>
+    
+    <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+    </div>
+    
+    <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px;">
+        <input type="checkbox" id="rememberMe" name="rememberMe" style="width: auto;">
+        <label for="rememberMe" style="margin: 0; font-weight: normal; color: #666;">Remember me for 30 days</label>
+    </div>
+    
+    <button type="submit" class="login-btn">Login</button>
+</form>
     </div>
 </body>
 </html>
@@ -654,7 +700,7 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, rememberMe } = req.body;
     
     // Get credentials from environment variables
     const validUsername = process.env.ADMIN_USERNAME || 'admin';
@@ -662,6 +708,14 @@ app.post('/login', (req, res) => {
     
     if (username === validUsername && password === validPassword) {
         req.session.authenticated = true;
+        
+        // If remember me is checked, extend session to 30 days
+        if (rememberMe) {
+            req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+        } else {
+            req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 24 hours
+        }
+        
         res.redirect('/');
     } else {
         res.redirect('/login?error=1');
@@ -698,9 +752,57 @@ app.get('/favicon.ico', (req, res) => {
     res.sendFile(__dirname + '/public/favicon.ico');
 });
 
+// Helper function to validate pickup date (add this before the API endpoints)
+function validatePickupDate(pickupDate, orderCreatedAt) {
+    if (!pickupDate) {
+        return { isValid: true }; // No pickup date provided is fine
+    }
+    
+    const pickupDateObj = new Date(pickupDate);
+    const orderDateObj = new Date(orderCreatedAt);
+    
+    // Remove time component for date comparison
+    pickupDateObj.setHours(0, 0, 0, 0);
+    orderDateObj.setHours(0, 0, 0, 0);
+    
+    // Check if pickup date is before order date
+    if (pickupDateObj < orderDateObj) {
+        return {
+            isValid: false,
+            error: `Pickup date (${pickupDateObj.toLocaleDateString()}) cannot be before the order creation date (${orderDateObj.toLocaleDateString()}). Packages cannot be picked up before they are ordered.`
+        };
+    }
+    
+    // Check if pickup date is too far in the future (more than 1 year from now)
+    const oneYearFromNow = new Date();
+    oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+    oneYearFromNow.setHours(0, 0, 0, 0);
+    
+    if (pickupDateObj > oneYearFromNow) {
+        return {
+            isValid: false,
+            error: 'Pickup date cannot be more than 1 year in the future.'
+        };
+    }
+    
+    // Check if pickup date is too far in the past (more than 2 years ago)
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    twoYearsAgo.setHours(0, 0, 0, 0);
+    
+    if (pickupDateObj < twoYearsAgo) {
+        return {
+            isValid: false,
+            error: 'Pickup date cannot be more than 2 years in the past.'
+        };
+    }
+    
+    return { isValid: true };
+}
+
 // API endpoints (protected)
 app.post('/api/create-status-page', requireAuth, async (req, res) => {
-    const { orderNumber, trackingNumber } = req.body;
+    const { orderNumber, trackingNumber, pickupDate } = req.body; // Added pickupDate
 
     if (!orderNumber || !trackingNumber) {
         return res.status(400).json({ 
@@ -719,17 +821,27 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
 
         const { order } = shopifyResult;
         
+        // VALIDATE PICKUP DATE AGAINST ORDER DATE
+        const pickupValidation = validatePickupDate(pickupDate, order.createdAt);
+        if (!pickupValidation.isValid) {
+            return res.status(400).json({
+                success: false,
+                error: pickupValidation.error
+            });
+        }
+        
         // Detect carrier and generate tracking URL
         const carrierInfo = detectCarrierAndGenerateUrl(trackingNumber);
         
-        // Generate realistic tracking events with fulfillment data
+        // Generate realistic tracking events with fulfillment data and optional pickup date
         const trackingEvents = generateRealisticTrackingEventsWithFulfillment(
             order.createdAt,
             order.shippingAddress.city,
             order.shippingAddress.provinceCode,
             order.isDelivered,
             order.deliveryDate,
-            order.fulfillments // Pass fulfillment data for real dates
+            order.fulfillments, // Pass fulfillment data for real dates
+            pickupDate // Pass custom pickup date if provided
         );
 
         // Create status page data
@@ -746,6 +858,7 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
             isDelivered: order.isDelivered,
             deliveryDate: order.deliveryDate,
             events: trackingEvents,
+            customPickupDate: pickupDate, // Store the custom pickup date
             createdAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
             saved: false // Track if page has been saved to Firebase
@@ -895,14 +1008,15 @@ app.get('/api/status/:pageId', async (req, res) => {
                 // Update carrier info if tracking number changed
                 const carrierInfo = detectCarrierAndGenerateUrl(statusData.trackingNumber);
                 
-                // Regenerate events with updated fulfillment status
+                // Regenerate events with updated fulfillment status and preserve custom pickup date
                 const updatedEvents = generateRealisticTrackingEventsWithFulfillment(
                     order.createdAt,
                     order.shippingAddress.city,
                     order.shippingAddress.provinceCode,
                     order.isDelivered,
                     order.deliveryDate,
-                    order.fulfillments
+                    order.fulfillments,
+                    statusData.customPickupDate // Preserve custom pickup date
                 );
                 
                 // Update stored data

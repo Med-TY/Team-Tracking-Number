@@ -110,7 +110,13 @@
             color: #444;
         }
 
-        input[type="text"], input[type="number"] {
+        .optional-label {
+            color: #666;
+            font-weight: 400;
+            font-size: 14px;
+        }
+
+        input[type="text"], input[type="number"], input[type="date"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e1e8ed;
@@ -119,9 +125,66 @@
             transition: border-color 0.3s;
         }
 
-        input[type="text"]:focus, input[type="number"]:focus {
+        input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus {
             outline: none;
             border-color: #4CAF50;
+        }
+
+        /* Collapsible pickup date section */
+        .pickup-date-section {
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+
+        .pickup-date-toggle {
+            background: #f8f9fa;
+            padding: 12px 16px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+            transition: background 0.3s;
+        }
+
+        .pickup-date-toggle:hover {
+            background: #e9ecef;
+        }
+
+        .pickup-date-toggle.active {
+            background: #e8f5e8;
+        }
+
+        .toggle-icon {
+            font-weight: bold;
+            color: #666;
+            transition: transform 0.3s;
+        }
+
+        .pickup-date-toggle.active .toggle-icon {
+            transform: rotate(180deg);
+        }
+
+        .pickup-date-content {
+            padding: 0 16px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s, padding 0.3s;
+        }
+
+        .pickup-date-content.active {
+            max-height: 150px;
+            padding: 16px;
+        }
+
+        .help-text {
+            font-size: 14px;
+            color: #666;
+            margin-top: 4px;
+            line-height: 1.4;
         }
 
         .button-group {
@@ -380,6 +443,12 @@
             animation: pulse-blue 2s infinite;
         }
 
+        .timeline-item.custom-pickup .timeline-icon {
+            background: #9C27B0;
+            border-color: #9C27B0;
+            box-shadow: 0 0 0 4px rgba(156, 39, 176, 0.2);
+        }
+
         @keyframes pulse-blue {
             0% { box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(33, 150, 243, 0); }
@@ -408,10 +477,27 @@
             background: #f0f8ff;
         }
 
+        .timeline-item.custom-pickup .timeline-content {
+            border-color: #9C27B0;
+            background: #f3e5f5;
+        }
+
         .timeline-title {
             font-weight: 600;
             color: #1a1a1a;
             margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .custom-pickup-badge {
+            background: #9C27B0;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 500;
         }
 
         .timeline-date {
@@ -551,7 +637,7 @@
             <div class="admin-header">
                 <h1>Order Status Update Manager</h1>
                 <p>Create realistic status pages for orders with automatic Shopify integration and Firebase hosting</p>
-                <a href="/logout" class="logout-btn">🔓 Logout</a>
+                <a href="/logout" class="logout-btn">🔐 Logout</a>
                 <div>
                     <div id="connectionStatus" class="connection-status disconnected">
                         <span class="status-dot"></span>
@@ -599,6 +685,26 @@
                     <input type="text" id="trackingNumber" name="trackingNumber" required placeholder="391564901204" title="Enter the shipping carrier tracking number">
                 </div>
 
+                <!-- Optional Pickup Date Section -->
+                <div class="pickup-date-section">
+                    <div class="pickup-date-toggle" id="pickupDateToggle">
+                        <div>
+                            <strong>Custom Pickup Date</strong>
+                            <span class="optional-label">(Optional)</span>
+                        </div>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="pickup-date-content" id="pickupDateContent">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="pickupDate">Package Pickup Date</label>
+                            <input type="date" id="pickupDate" name="pickupDate">
+                            <div class="help-text">
+                                Leave blank to use automatic calculation. When set, this overrides the default pickup timing and creates a custom "Package Picked Up" event on your specified date.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="button-group">
                     <button type="submit" class="btn-primary" id="submitBtn">Generate Status Page</button>
                     <button type="button" class="btn-secondary" onclick="resetForm()">Reset</button>
@@ -611,7 +717,7 @@
                 <div class="preview-header">
                     <div>
                         <h3>Status Page Generated!</h3>
-                        <span id="pageStatus" class="page-status temporary">📄 Temporary - Copy link to save permanently</span>
+                        <span id="pageStatus" class="page-status temporary">🔄 Temporary - Copy link to save permanently</span>
                     </div>
                     <div class="copy-link">
                         <input type="text" id="generatedLink" readonly>
@@ -644,6 +750,27 @@
         // Check backend connection on load (only for admin panel)
         if (!isTrackingPage) {
             checkBackendConnection();
+            initializePickupDateToggle();
+        }
+
+        // Initialize pickup date toggle functionality
+        function initializePickupDateToggle() {
+            const toggle = document.getElementById('pickupDateToggle');
+            const content = document.getElementById('pickupDateContent');
+            
+            toggle.addEventListener('click', function() {
+                const isActive = toggle.classList.contains('active');
+                
+                if (isActive) {
+                    // Close
+                    toggle.classList.remove('active');
+                    content.classList.remove('active');
+                } else {
+                    // Open
+                    toggle.classList.add('active');
+                    content.classList.add('active');
+                }
+            });
         }
 
         async function checkBackendConnection() {
@@ -693,9 +820,36 @@
             // Clear previous errors
             document.getElementById('errorMessage').style.display = 'none';
             
+            const pickupDate = document.getElementById('pickupDate').value;
+            
+            // Basic pickup date validation on frontend (will be validated more thoroughly on backend)
+            if (pickupDate) {
+                const pickupDateObj = new Date(pickupDate);
+                const today = new Date();
+                
+                // Check if pickup date is in the future beyond reasonable limits (more than 1 year from now)
+                const oneYearFromNow = new Date();
+                oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+                
+                if (pickupDateObj > oneYearFromNow) {
+                    showError('Pickup date cannot be more than 1 year in the future.');
+                    return;
+                }
+                
+                // Check if pickup date is too far in the past (more than 2 years ago)
+                const twoYearsAgo = new Date();
+                twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+                
+                if (pickupDateObj < twoYearsAgo) {
+                    showError('Pickup date cannot be more than 2 years in the past.');
+                    return;
+                }
+            }
+            
             const formData = {
                 orderNumber: document.getElementById('orderNumber').value,
-                trackingNumber: document.getElementById('trackingNumber').value
+                trackingNumber: document.getElementById('trackingNumber').value,
+                pickupDate: pickupDate || null // Include pickup date
             };
 
             // Show loading spinner
@@ -766,7 +920,7 @@
             document.getElementById('previewContent').innerHTML = previewHtml;
         }
 
-        // Generate tracking page HTML with realistic US shipping states (same as original)
+        // Generate tracking page HTML with realistic US shipping states and custom pickup highlighting
         function generateTrackingPageHTML(data) {
             // Check if package is delivered (only if actually delivered in Shopify)
             const isDelivered = data.isDelivered === true;
@@ -791,12 +945,19 @@
                 if (event.isDelivered) {
                     itemClass += ' delivered';
                 }
+                // Custom pickup events now look the same as regular events
+                // No special styling needed
+
+                // Add custom pickup badge for custom pickup events (removed - no longer needed)
+                const customPickupBadge = '';
 
                 return `
                     <div class="${itemClass}">
                         <div class="timeline-icon"></div>
                         <div class="timeline-content">
-                            <div class="timeline-title">${event.status}</div>
+                            <div class="timeline-title">
+                                ${event.status}
+                            </div>
                             <div class="timeline-date">${event.date} at ${event.time}</div>
                             ${event.location ? `<div class="timeline-location">📍 ${event.location}</div>` : ''}
                         </div>
@@ -897,7 +1058,6 @@
                         ${eventsHtml}
                     </div>
 
-  
                     <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e1e8ed; color: #888; font-size: 14px;">
                         Last updated: ${new Date(data.lastUpdated || data.createdAt).toLocaleString()}
                         ${isDelivered ? '<br><span style="color: #4CAF50;">✓ Delivery Status: Confirmed</span>' : '<br><span style="color: #2196F3;">⏱ Status: In Transit</span>'}
@@ -979,7 +1139,7 @@
             copyButton.className = 'copy-btn';
             copyButton.disabled = false;
             
-            pageStatus.textContent = '📄 Temporary - Copy link to save permanently';
+            pageStatus.textContent = '🔄 Temporary - Copy link to save permanently';
             pageStatus.className = 'page-status temporary';
         }
 
@@ -999,6 +1159,12 @@
             document.getElementById('previewSection').style.display = 'none';
             document.getElementById('successMessage').style.display = 'none';
             document.getElementById('errorMessage').style.display = 'none';
+            
+            // Reset pickup date toggle
+            const toggle = document.getElementById('pickupDateToggle');
+            const content = document.getElementById('pickupDateContent');
+            toggle.classList.remove('active');
+            content.classList.remove('active');
             
             // Reset global variables
             currentPageId = null;
