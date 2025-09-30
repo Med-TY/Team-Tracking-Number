@@ -280,6 +280,53 @@ async function fetchShopifyOrder(orderNumber) {
     }
 }
 
+
+// Helper function to fetch order metafields (including replacement tracking)
+async function fetchOrderMetafields(orderId) {
+    try {
+        const metafieldsUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders/${orderId}/metafields.json`;
+        
+        const response = await axios.get(metafieldsUrl, {
+            headers: {
+                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const metafields = response.data.metafields || [];
+        const replacementTracking = metafields.find(m => 
+            m.key === 'replacement_tracking' || 
+            m.namespace === 'custom'
+        );
+        
+        return {
+            success: true,
+            replacementTracking: replacementTracking || null
+        };
+    } catch (error) {
+        console.error('Metafields fetch error:', error.message);
+        return {
+            success: false,
+            replacementTracking: null
+        };
+    }
+}
+
+// Helper function to get main tracking number from order
+function getMainTrackingNumber(order) {
+    if (order.fulfillments && order.fulfillments.length > 0) {
+        for (const fulfillment of order.fulfillments) {
+            if (fulfillment.tracking_number) {
+                return fulfillment.tracking_number;
+            }
+            if (fulfillment.tracking_numbers && fulfillment.tracking_numbers.length > 0) {
+                return fulfillment.tracking_numbers[0];
+            }
+        }
+    }
+    return null;
+}
+
 // Updated function to handle fulfillment dates properly with Label Created 2 days before and optional custom pickup date
 function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null) {
     const events = [];
@@ -305,14 +352,16 @@ function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCi
 
 // Replace the existing date calculation logic with this:
 if (customPickupDate) {
-    // Use custom pickup date
-    packagePickupDate = new Date(customPickupDate);
-    // Set label created to 1-2 business days before pickup, but never before order date
-    labelCreatedDate = subtractBusinessDays(packagePickupDate, Math.floor(Math.random() * 2) + 1);
+    // Use custom pickup date - this is the LABEL CREATED date for replacement tracking
+    labelCreatedDate = new Date(customPickupDate);
+    
+    // Package Picked Up = 1-2 business days AFTER label created
+    packagePickupDate = addBusinessDays(labelCreatedDate, Math.floor(Math.random() * 2) + 1);
     
     // Ensure label date is not before order date
     if (labelCreatedDate <= orderDateObj) {
         labelCreatedDate = addBusinessDays(orderDateObj, 1); // Day after order
+        packagePickupDate = addBusinessDays(labelCreatedDate, 1);
     }
 } else {
     // AUTOMATIC DATE LOGIC - ensure chronological order starting from order date
@@ -802,7 +851,7 @@ function validatePickupDate(pickupDate, orderCreatedAt) {
 
 // API endpoints (protected)
 app.post('/api/create-status-page', requireAuth, async (req, res) => {
-    const { orderNumber, trackingNumber, pickupDate } = req.body; // Added pickupDate
+    const { orderNumber, trackingNumber, pickupDate } = req.body;
 
     if (!orderNumber || !trackingNumber) {
         return res.status(400).json({ 
@@ -821,8 +870,43 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
 
         const { order } = shopifyResult;
         
+        // Fetch metafields to check for replacement tracking
+        const metafieldsResult = await fetchOrderMetafields(order.id);
+        const replacementTrackingMetafield = metafieldsResult.replacementTracking;
+        
+        // Get the main tracking number from fulfillments
+        const mainTrackingNumber = getMainTrackingNumber(order);
+        
+        // Check if the provided tracking number matches either main or replacement
+        let isReplacementTracking = false;
+        let labelCreatedDate = null;
+        
+        if (replacementTrackingMetafield && trackingNumber === replacementTrackingMetafield.value) {
+            // This is a replacement tracking number
+            isReplacementTracking = true;
+            labelCreatedDate = replacementTrackingMetafield.updated_at; // CHANGED: Use updated_at instead of created_at
+            console.log(`✅ Replacement tracking detected: ${trackingNumber}`);
+            console.log(`📅 Label will be created on: ${labelCreatedDate}`);
+        } else if (mainTrackingNumber && trackingNumber === mainTrackingNumber) {
+            // This is the main tracking number
+            isReplacementTracking = false;
+            console.log(`✅ Main tracking number matched: ${trackingNumber}`);
+        } else {
+            // Tracking number doesn't match either
+            return res.status(400).json({
+                success: false,
+                error: `Tracking number "${trackingNumber}" does not match the order. Please verify the tracking number and try again.`
+            });
+        }
+        
+        // For replacement tracking, use the metafield created_at as the custom pickup date
+        let effectivePickupDate = pickupDate;
+        if (isReplacementTracking && labelCreatedDate) {
+            effectivePickupDate = labelCreatedDate;
+        }
+        
         // VALIDATE PICKUP DATE AGAINST ORDER DATE
-        const pickupValidation = validatePickupDate(pickupDate, order.createdAt);
+        const pickupValidation = validatePickupDate(effectivePickupDate, order.createdAt);
         if (!pickupValidation.isValid) {
             return res.status(400).json({
                 success: false,
@@ -840,8 +924,8 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
             order.shippingAddress.provinceCode,
             order.isDelivered,
             order.deliveryDate,
-            order.fulfillments, // Pass fulfillment data for real dates
-            pickupDate // Pass custom pickup date if provided
+            order.fulfillments,
+            effectivePickupDate // Use replacement tracking date if applicable
         );
 
         // Create status page data
@@ -858,32 +942,35 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
             isDelivered: order.isDelivered,
             deliveryDate: order.deliveryDate,
             events: trackingEvents,
-            customPickupDate: pickupDate, // Store the custom pickup date
+            customPickupDate: effectivePickupDate,
+            isReplacementTracking: isReplacementTracking, // Flag to indicate this is a replacement
+            replacementTrackingAddedDate: isReplacementTracking ? labelCreatedDate : null,
             createdAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
-            saved: false // Track if page has been saved to Firebase
+            saved: false
         };
 
         // Generate unique page ID
         const pageId = crypto.randomBytes(8).toString('hex');
         
-        // Store status page temporarily (NOT in Firebase yet)
+        // Store status page temporarily
         tempStatusPages.set(pageId, statusPageData);
 
         // Auto-cleanup temp pages after 1 hour if not saved
         setTimeout(() => {
             if (tempStatusPages.has(pageId) && !tempStatusPages.get(pageId).saved) {
                 tempStatusPages.delete(pageId);
-                console.log(`🗑️  Cleaned up unsaved temp page: ${pageId}`);
+                console.log(`🗑️ Cleaned up unsaved temp page: ${pageId}`);
             }
-        }, 60 * 60 * 1000); // 1 hour
+        }, 60 * 60 * 1000);
 
         // Return success with page ID
         res.json({
             success: true,
             pageId: pageId,
             url: `${req.protocol}://${req.get('host')}/track/${pageId}`,
-            data: statusPageData
+            data: statusPageData,
+            isReplacement: isReplacementTracking
         });
 
     } catch (error) {
@@ -894,7 +981,6 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
         });
     }
 });
-
 // Other protected API endpoints
 app.post('/api/save-status-page/:pageId', requireAuth, async (req, res) => {
     const { pageId } = req.params;
@@ -998,17 +1084,28 @@ app.get('/api/status/:pageId', async (req, res) => {
         const now = new Date();
         const hoursSinceUpdate = (now - lastUpdated) / (1000 * 60 * 60);
         
-        if (hoursSinceUpdate >= 4) {
+       if (hoursSinceUpdate >= 4) {
             // Refresh order data from Shopify
             const shopifyResult = await fetchShopifyOrder(statusData.orderNumber);
             
             if (shopifyResult.success) {
                 const { order } = shopifyResult;
                 
-                // Update carrier info if tracking number changed
+                // Re-fetch metafields for replacement tracking
+                const metafieldsResult = await fetchOrderMetafields(order.id);
+                const replacementTrackingMetafield = metafieldsResult.replacementTracking;
+                
+                let effectivePickupDate = statusData.customPickupDate;
+                
+            // If this was a replacement tracking, preserve the date
+                if (statusData.isReplacementTracking && replacementTrackingMetafield) {
+                    effectivePickupDate = replacementTrackingMetafield.updated_at; // CHANGED: Use updated_at
+                }
+                
+                // Update carrier info
                 const carrierInfo = detectCarrierAndGenerateUrl(statusData.trackingNumber);
                 
-                // Regenerate events with updated fulfillment status and preserve custom pickup date
+                // Regenerate events
                 const updatedEvents = generateRealisticTrackingEventsWithFulfillment(
                     order.createdAt,
                     order.shippingAddress.city,
@@ -1016,7 +1113,7 @@ app.get('/api/status/:pageId', async (req, res) => {
                     order.isDelivered,
                     order.deliveryDate,
                     order.fulfillments,
-                    statusData.customPickupDate // Preserve custom pickup date
+                    effectivePickupDate
                 );
                 
                 // Update stored data
@@ -1030,7 +1127,7 @@ app.get('/api/status/:pageId', async (req, res) => {
                     deliveryDate: order.deliveryDate,
                     events: updatedEvents,
                     lastUpdated: now.toISOString()
-                };
+                }; 
                 
                 // Save updated data back to Firebase if it was saved before and Firebase is available
                 if (statusData.saved && db) {
@@ -1098,5 +1195,161 @@ app.listen(PORT, () => {
     console.log('📊 Admin panel: http://localhost:' + PORT + '/');
 });
 
+
+/* // Add this test endpoint to your server.js
+app.get('/api/test-metafields/:orderNumber', requireAuth, async (req, res) => {
+    const { orderNumber } = req.params;
+    
+    try {
+        // Clean order number
+        const cleanOrderNumber = orderNumber.replace('#', '');
+        
+        // Search for the order
+        let searchUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json?name=%23${cleanOrderNumber}&status=any`;
+        
+        let response = await axios.get(searchUrl, {
+            headers: {
+                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // If not found with #, try without
+        if (!response.data.orders || response.data.orders.length === 0) {
+            searchUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json?name=${cleanOrderNumber}&status=any`;
+            response = await axios.get(searchUrl, {
+                headers: {
+                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                }
+            });
+        }
+
+        if (response.data.orders && response.data.orders.length > 0) {
+            const order = response.data.orders[0];
+            const orderId = order.id;
+            
+            // Fetch metafields for this order
+            const metafieldsUrl = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders/${orderId}/metafields.json`;
+            
+            const metafieldsResponse = await axios.get(metafieldsUrl, {
+                headers: {
+                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            // Look for "Replacement Tracking" metafield
+            const metafields = metafieldsResponse.data.metafields || [];
+            const replacementTracking = metafields.find(m => 
+                m.key === 'replacement_tracking' || 
+                m.key === 'Replacement Tracking' ||
+                m.namespace === 'replacement_tracking'
+            );
+            
+            res.json({
+                success: true,
+                orderNumber: order.name,
+                orderId: orderId,
+                allMetafields: metafields,
+                replacementTrackingFound: !!replacementTracking,
+                replacementTrackingData: replacementTracking || null
+            });
+            
+        } else {
+            res.status(404).json({
+                success: false,
+                error: 'Order not found'
+            });
+        }
+        
+    } catch (error) {
+        console.error('Metafield test error:', error.response?.data || error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            details: error.response?.data
+        });
+    }
+}); */
+
+
+
+/* // Test endpoint to verify replacement tracking date
+app.get('/api/test-replacement-date/:orderNumber/:trackingNumber', requireAuth, async (req, res) => {
+    const { orderNumber, trackingNumber } = req.params;
+    
+    try {
+        // Fetch order from Shopify
+        const shopifyResult = await fetchShopifyOrder(orderNumber);
+        
+        if (!shopifyResult.success) {
+            return res.status(404).json(shopifyResult);
+        }
+
+        const { order } = shopifyResult;
+        
+        // Fetch metafields
+        const metafieldsResult = await fetchOrderMetafields(order.id);
+        const replacementTrackingMetafield = metafieldsResult.replacementTracking;
+        
+        // Get main tracking
+        const mainTrackingNumber = getMainTrackingNumber(order);
+        
+        let result = {
+            success: true,
+            orderNumber: order.name,
+            orderId: order.id,
+            orderCreatedAt: order.createdAt,
+            providedTrackingNumber: trackingNumber,
+            mainTrackingNumber: mainTrackingNumber,
+            replacementMetafieldFound: !!replacementTrackingMetafield
+        };
+        
+        if (replacementTrackingMetafield) {
+            result.replacementTracking = {
+                value: replacementTrackingMetafield.value,
+                created_at: replacementTrackingMetafield.created_at,
+                updated_at: replacementTrackingMetafield.updated_at,
+                matchesProvided: trackingNumber === replacementTrackingMetafield.value
+            };
+            
+            // Parse the dates
+            const updatedAt = new Date(replacementTrackingMetafield.updated_at);
+            const createdAt = new Date(replacementTrackingMetafield.created_at);
+            
+            result.dateAnalysis = {
+                updated_at_raw: replacementTrackingMetafield.updated_at,
+                updated_at_parsed: updatedAt.toISOString(),
+                updated_at_readable: updatedAt.toLocaleString(),
+                created_at_raw: replacementTrackingMetafield.created_at,
+                created_at_parsed: createdAt.toISOString(),
+                created_at_readable: createdAt.toLocaleString(),
+                areDifferent: replacementTrackingMetafield.updated_at !== replacementTrackingMetafield.created_at
+            };
+        }
+        
+        // Check which tracking number matches
+        if (trackingNumber === mainTrackingNumber) {
+            result.trackingType = 'MAIN_TRACKING';
+        } else if (replacementTrackingMetafield && trackingNumber === replacementTrackingMetafield.value) {
+            result.trackingType = 'REPLACEMENT_TRACKING';
+            result.dateToUseForLabel = replacementTrackingMetafield.updated_at;
+        } else {
+            result.trackingType = 'NO_MATCH';
+            result.error = 'Tracking number does not match main or replacement tracking';
+        }
+        
+        res.json(result);
+        
+    } catch (error) {
+        console.error('Test error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+ */
 // Export for testing
 module.exports = app;

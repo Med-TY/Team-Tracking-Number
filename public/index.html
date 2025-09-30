@@ -933,37 +933,38 @@
                     ${data.deliveryDate ? `<p style="opacity: 0.9; font-size: 14px;">Delivered on: ${new Date(data.deliveryDate).toLocaleDateString()}</p>` : ''}
                 </div>
             ` : '';
+const eventsHtml = data.events.map(event => {
+    let itemClass = 'timeline-item';
+    if (event.completed) {
+        itemClass += ' completed';
+    }
+    if (event.current) {
+        itemClass += ' current';
+    }
+    if (event.isDelivered) {
+        itemClass += ' delivered';
+    }
 
-            const eventsHtml = data.events.map(event => {
-                let itemClass = 'timeline-item';
-                if (event.completed) {
-                    itemClass += ' completed';
-                }
-                if (event.current) {
-                    itemClass += ' current';
-                }
-                if (event.isDelivered) {
-                    itemClass += ' delivered';
-                }
-                // Custom pickup events now look the same as regular events
-                // No special styling needed
+    // Add replacement badge for Label Created if this is replacement tracking
+    let replacementBadge = '';
+    if (data.isReplacementTracking && event.status === 'Label Created') {
+        replacementBadge = '<span class="custom-pickup-badge">REPLACEMENT</span>';
+    }
 
-                // Add custom pickup badge for custom pickup events (removed - no longer needed)
-                const customPickupBadge = '';
-
-                return `
-                    <div class="${itemClass}">
-                        <div class="timeline-icon"></div>
-                        <div class="timeline-content">
-                            <div class="timeline-title">
-                                ${event.status}
-                            </div>
-                            <div class="timeline-date">${event.date} at ${event.time}</div>
-                            ${event.location ? `<div class="timeline-location">📍 ${event.location}</div>` : ''}
-                        </div>
-                    </div>
-                `;
-            }).join('');
+    return `
+        <div class="${itemClass}">
+            <div class="timeline-icon"></div>
+            <div class="timeline-content">
+                <div class="timeline-title">
+                    ${event.status}
+                    ${replacementBadge}
+                </div>
+                <div class="timeline-date">${event.date} at ${event.time}</div>
+                ${event.location ? `<div class="timeline-location">📍 ${event.location}</div>` : ''}
+            </div>
+        </div>
+    `;
+}).join('');
 
             // Current status message based on latest event
             let currentStatusMessage = '';
