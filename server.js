@@ -71,13 +71,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// Authentication middleware
+// Authentication middleware - DISABLED
+// function requireAuth(req, res, next) {
+//     if (req.session && req.session.authenticated) {
+//         return next();
+//     } else {
+//         return res.redirect('/login');
+//     }
+// }
+
+// Dummy auth middleware that always passes (authentication disabled)
 function requireAuth(req, res, next) {
-    if (req.session && req.session.authenticated) {
-        return next();
-    } else {
-        return res.redirect('/login');
-    }
+    return next();
 }
 
 // Store for temporary status pages (before saving to Firebase)
@@ -617,12 +622,13 @@ function generateRealisticTime(date, status) {
     return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-// LOGIN ROUTES
+// LOGIN ROUTES - DISABLED (Authentication removed)
+/*
 app.get('/login', (req, res) => {
     if (req.session && req.session.authenticated) {
         return res.redirect('/');
     }
-    
+
     res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -776,24 +782,29 @@ app.get('/logout', (req, res) => {
         res.redirect('/login');
     });
 });
+*/
 
-// PROTECTED ROUTES (require authentication)
-// Check for tracking parameter and allow public access
+// ROUTES (authentication disabled)
+
+// Dashboard route (no authentication required)
+app.get('/dashboard', (req, res) => {
+    res.sendFile(__dirname + '/public/index.html');
+});
+
+// Root route - redirect to dashboard or show tracking page
 app.get('/', (req, res) => {
-    // If there's a track parameter, allow public access (customer tracking page)
+    // If there's a track parameter, show the customer tracking page
     if (req.query.track) {
         return res.sendFile(__dirname + '/public/index.html');
     }
-    
-    // Otherwise, require authentication for admin panel
-    return requireAuth(req, res, () => {
-        res.sendFile(__dirname + '/public/index.html');
-    });
+
+    // Otherwise, redirect to dashboard
+    return res.redirect('/dashboard');
 });
 
-// Admin dashboard route (alternative path)
-app.get('/admin', requireAuth, (req, res) => {
-    res.redirect('/');
+// Admin dashboard route (alternative path) - redirect to /dashboard
+app.get('/admin', (req, res) => {
+    res.redirect('/dashboard');
 });
 
 // Favicon route
@@ -849,8 +860,8 @@ function validatePickupDate(pickupDate, orderCreatedAt) {
     return { isValid: true };
 }
 
-// API endpoints (protected)
-app.post('/api/create-status-page', requireAuth, async (req, res) => {
+// API endpoints (public - authentication disabled)
+app.post('/api/create-status-page', async (req, res) => {
     const { orderNumber, trackingNumber, pickupDate } = req.body;
 
     if (!orderNumber || !trackingNumber) {
@@ -981,8 +992,8 @@ app.post('/api/create-status-page', requireAuth, async (req, res) => {
         });
     }
 });
-// Other protected API endpoints
-app.post('/api/save-status-page/:pageId', requireAuth, async (req, res) => {
+// Other API endpoints
+app.post('/api/save-status-page/:pageId', async (req, res) => {
     const { pageId } = req.params;
     
     try {
@@ -1032,7 +1043,7 @@ app.post('/api/save-status-page/:pageId', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/health', requireAuth, (req, res) => {
+app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         shopifyConnected: !!SHOPIFY_SHOP_DOMAIN && !!SHOPIFY_ACCESS_TOKEN,
@@ -1197,7 +1208,7 @@ app.listen(PORT, () => {
 
 
 /* // Add this test endpoint to your server.js
-app.get('/api/test-metafields/:orderNumber', requireAuth, async (req, res) => {
+app.get('/api/test-metafields/:orderNumber', async (req, res) => {
     const { orderNumber } = req.params;
     
     try {
@@ -1276,7 +1287,7 @@ app.get('/api/test-metafields/:orderNumber', requireAuth, async (req, res) => {
 
 
 /* // Test endpoint to verify replacement tracking date
-app.get('/api/test-replacement-date/:orderNumber/:trackingNumber', requireAuth, async (req, res) => {
+app.get('/api/test-replacement-date/:orderNumber/:trackingNumber', async (req, res) => {
     const { orderNumber, trackingNumber } = req.params;
     
     try {
