@@ -71,18 +71,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// Authentication middleware - DISABLED
-// function requireAuth(req, res, next) {
-//     if (req.session && req.session.authenticated) {
-//         return next();
-//     } else {
-//         return res.redirect('/login');
-//     }
-// }
-
-// Dummy auth middleware that always passes (authentication disabled)
+// Authentication middleware
 function requireAuth(req, res, next) {
-    return next();
+    if (req.session && req.session.authenticated) {
+        return next();
+    } else {
+        return res.redirect('/login');
+    }
 }
 
 // Store for temporary status pages (before saving to Firebase)
@@ -168,6 +163,22 @@ function getRegion(stateCode) {
     return 'DEFAULT';
 }
 
+// Helper to determine time zone from state code
+function getTimeZone(stateCode) {
+    const timeZones = {
+        'PT': ['CA', 'OR', 'WA', 'NV'],
+        'MT': ['AZ', 'CO', 'UT', 'ID', 'MT', 'WY', 'NM'],
+        'CT': ['TX', 'IL', 'MN', 'MO', 'WI', 'LA', 'AL', 'TN', 'MS', 'OK', 'KS', 'NE', 'IA', 'AR', 'ND', 'SD'],
+        'ET': ['NY', 'FL', 'OH', 'PA', 'GA', 'NC', 'NJ', 'VA', 'MA', 'MI', 'IN', 'SC', 'MD', 'DC', 'CT', 'KY', 'WV', 'DE', 'RI', 'VT', 'NH', 'ME']
+    };
+
+    for (const [zone, states] of Object.entries(timeZones)) {
+        if (states.includes(stateCode)) return zone;
+    }
+    // Default to ET if unknown
+    return 'ET';
+}
+
 // Shopify configuration
 const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -206,8 +217,8 @@ function addBusinessDays(date, days) {
 }
 
 // Helper function to get random business days interval (3-5 days)
-function getRandomBusinessDaysInterval() {
-    return Math.floor(Math.random() * 3) + 3; // Random number between 3-5
+function getRandomBusinessDaysInterval(multiplier = 1) {
+    return Math.floor((Math.random() * 3 + 2) * multiplier); // Base 2-4 days * multiplier
 }
 
 
@@ -350,11 +361,18 @@ function getMainTrackingNumber(order) {
 }
 
 // Updated function to handle fulfillment dates properly with Label Created 2 days before and optional custom pickup date
-function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null, savedRoute = null) {
+function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null, savedRoute = null, carrierName = 'Carrier') {
     const events = [];
     const today = new Date();
     const orderDateObj = new Date(orderDate);
     
+    // TIME DILATION: Stretch transit times for older orders to keep events recent
+    // This prevents the package from arriving too fast and looking "stuck" at the destination
+    const daysSinceOrder = Math.floor((today - orderDateObj) / (1000 * 60 * 60 * 24));
+    let timeMultiplier = 1;
+    if (daysSinceOrder > 14) timeMultiplier = 2.5; // > 2 weeks: Move very slowly
+    else if (daysSinceOrder > 7) timeMultiplier = 1.5; // > 1 week: Move slower
+
     let originRegion, originFacility, transitHub, finalSortingFacility;
 
     if (savedRoute) {
@@ -450,59 +468,103 @@ if (customPickupDate) {
     }
 }
     
- // Event templates with corrected date logic
-const eventTemplates = [
-    { 
-        status: 'Order Confirmed', 
-        location: 'Order Processing Center', 
-        fixedDate: orderConfirmedDate 
-    },
-    { 
-        status: 'Order Processed', 
-        location: 'Fulfillment Center', 
-        fixedDate: addBusinessDays(orderConfirmedDate, Math.floor(Math.random() * 2) + 1) // 1-2 days after order
-    },
-    { 
-        status: 'Label Created', 
-        location: 'Shipping Partner Facility', // Generic start
-        fixedDate: labelCreatedDate
-    },
-    { 
-        status: 'Package Picked Up', 
-        location: originFacility, // Starts at the origin hub
-        fixedDate: packagePickupDate
-    },
-    { 
-        status: 'Departed Shipping Partner Facility', 
-        location: originFacility, 
-        businessDaysFromPrevious: 1 // 1 day after pickup
-    },
-    { 
-        status: 'In Transit', 
-        location: transitHub, // Logical intermediate stop (can be null if short distance)
-        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-    },
-    { 
-        status: 'Arrived at Sorting Facility', 
-        location: finalSortingFacility, // Now in the destination state
-        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-    },
-    { 
-        status: 'Departed Sorting Facility', 
-        location: finalSortingFacility, 
-        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-    },
-    { 
-        status: 'Arrived at Destination Facility', 
-        location: `${destinationCity} Distribution Center`, // Close to home
-        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
-    },
-    { 
-        status: 'Out for Delivery', 
-        location: `${destinationCity}, ${provinceCode}`, 
-        businessDaysFromPrevious: getRandomBusinessDaysInterval() 
+    // CARRIER SPECIFIC LANGUAGE
+    // Define status text based on carrier to make it look authentic
+    let statusText = {
+        labelCreated: 'Label Created',
+        pickedUp: 'Package Picked Up',
+        departedOrigin: 'Departed Shipping Partner Facility',
+        arrivedSort: 'Arrived at Sorting Facility',
+        departedSort: 'Departed Sorting Facility',
+        arrivedDest: 'Arrived at Destination Facility',
+        outForDelivery: 'Out for Delivery'
+    };
+
+    if (carrierName === 'USPS') {
+        statusText = {
+            labelCreated: 'Shipping Label Created, USPS Awaiting Item',
+            pickedUp: 'Accepted at USPS Origin Facility',
+            departedOrigin: 'Departed USPS Regional Facility',
+            arrivedSort: 'Arrived at USPS Regional Facility',
+            departedSort: 'Departed USPS Regional Facility',
+            arrivedDest: 'Arrived at Post Office',
+            outForDelivery: 'Out for Delivery'
+        };
+    } else if (carrierName === 'UPS') {
+        statusText = {
+            labelCreated: 'Label Created',
+            pickedUp: 'Origin Scan',
+            departedOrigin: 'Departed from Facility',
+            arrivedSort: 'Arrived at Facility',
+            departedSort: 'Departed from Facility',
+            arrivedDest: 'Destination Scan',
+            outForDelivery: 'Out for Delivery'
+        };
+    } else if (carrierName === 'FedEx') {
+        statusText = {
+            labelCreated: 'Shipment information sent to FedEx',
+            pickedUp: 'Picked up',
+            departedOrigin: 'Left FedEx origin facility',
+            arrivedSort: 'Arrived at FedEx location',
+            departedSort: 'Departed FedEx location',
+            arrivedDest: 'At local FedEx facility',
+            outForDelivery: 'On FedEx vehicle for delivery'
+        };
     }
-];
+
+    // Event templates with corrected date logic and carrier specific text
+    const eventTemplates = [
+        { 
+            status: 'Order Confirmed', 
+            location: 'Order Processing Center', 
+            fixedDate: orderConfirmedDate 
+        },
+        { 
+            status: 'Order Processed', 
+            location: 'Fulfillment Center', 
+            fixedDate: addBusinessDays(orderConfirmedDate, Math.floor(Math.random() * 2) + 1) // 1-2 days after order
+        },
+        { 
+            status: statusText.labelCreated, 
+            location: 'Shipping Partner Facility', // Generic start
+            fixedDate: labelCreatedDate
+        },
+        { 
+            status: statusText.pickedUp, 
+            location: originFacility, // Starts at the origin hub
+            fixedDate: packagePickupDate
+        },
+        { 
+            status: statusText.departedOrigin, 
+            location: originFacility, 
+            businessDaysFromPrevious: 1 // 1 day after pickup
+        },
+        { 
+            status: 'In Transit', 
+            location: transitHub, // Logical intermediate stop (can be null if short distance)
+            businessDaysFromPrevious: getRandomBusinessDaysInterval(timeMultiplier) 
+        },
+        { 
+            status: statusText.arrivedSort, 
+            location: finalSortingFacility, // Now in the destination state
+            businessDaysFromPrevious: getRandomBusinessDaysInterval(timeMultiplier) 
+        },
+        { 
+            status: statusText.departedSort, 
+            location: finalSortingFacility, 
+            businessDaysFromPrevious: getRandomBusinessDaysInterval(timeMultiplier) 
+        },
+        { 
+            status: statusText.arrivedDest, 
+            location: `${destinationCity} Distribution Center`, // Close to home
+            businessDaysFromPrevious: getRandomBusinessDaysInterval(timeMultiplier) 
+        },
+        { 
+            status: statusText.outForDelivery, 
+            location: `${destinationCity}, ${provinceCode}`,
+            businessDaysFromPrevious: 1 // Usually next day after arriving at local center
+        }
+    ];
     
     // Calculate event dates
     let currentEventDate = orderDateObj;
@@ -523,8 +585,30 @@ const eventTemplates = [
             break;
         }
         
+        // SAFETY CHECK: Don't show "Out for Delivery" in the past if not delivered
+        // This prevents users from thinking they missed the delivery days ago
+        if (template.status === statusText.outForDelivery && !isDelivered) {
+            const isToday = currentEventDate.toDateString() === today.toDateString();
+            if (!isToday) {
+                break; // Stop generating events, leaving the package at "Arrived at Destination"
+            }
+        }
+
         let location = template.location;
         
+        // Determine state code for timezone calculation
+        let stateForTimeZone = 'DEFAULT';
+        if (location && location.includes(',')) {
+            // Extract state from "City, ST" or "City, ST Hub"
+            const parts = location.split(',');
+            if (parts.length > 1) {
+                const statePart = parts[1].trim().split(' ')[0]; // Get "ST" from " ST Hub"
+                if (statePart.length === 2) stateForTimeZone = statePart;
+            }
+        } else if (location === `${destinationCity}, ${provinceCode}`) {
+            stateForTimeZone = provinceCode;
+        }
+
         events.push({
             status: template.status,
             date: currentEventDate.toLocaleDateString('en-US', { 
@@ -533,7 +617,7 @@ const eventTemplates = [
                 month: 'short', 
                 day: 'numeric' 
             }),
-            time: generateRealisticTime(currentEventDate, template.status),
+            time: generateRealisticTime(currentEventDate, template.status, stateForTimeZone),
             location: location,
             completed: true, // All past events are completed
             current: false, // Will be set below for the last event
@@ -559,7 +643,7 @@ const eventTemplates = [
                 month: 'short', 
                 day: 'numeric' 
             }),
-            time: generateRealisticTime(actualDeliveryDate, 'Delivered'),
+            time: generateRealisticTime(actualDeliveryDate, 'Delivered', provinceCode),
             location: `${destinationCity}, ${provinceCode}`,
             completed: true,
             current: false,
@@ -623,7 +707,7 @@ function detectCarrierAndGenerateUrl(trackingNumber) {
     };
 }
 
-function generateRealisticTime(date, status) {
+function generateRealisticTime(date, status, stateCode = 'DEFAULT') {
     let hour, minute, period;
     
     switch (status) {
@@ -664,11 +748,13 @@ function generateRealisticTime(date, status) {
         period = 'AM';
     }
     
-    return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
+    // Add Time Zone
+    const timeZone = getTimeZone(stateCode);
+    
+    return `${hour}:${String(minute).padStart(2, '0')} ${period} ${timeZone}`;
 }
 
-// LOGIN ROUTES - DISABLED (Authentication removed)
-/*
+// LOGIN ROUTES
 app.get('/login', (req, res) => {
     if (req.session && req.session.authenticated) {
         return res.redirect('/');
@@ -827,12 +913,11 @@ app.get('/logout', (req, res) => {
         res.redirect('/login');
     });
 });
-*/
 
-// ROUTES (authentication disabled)
+// ROUTES
 
-// Dashboard route (no authentication required)
-app.get('/dashboard', (req, res) => {
+// Dashboard route (authentication required)
+app.get('/dashboard', requireAuth, (req, res) => {
     res.sendFile(__dirname + '/public/index.html');
 });
 
@@ -848,7 +933,7 @@ app.get('/', (req, res) => {
 });
 
 // Admin dashboard route (alternative path) - redirect to /dashboard
-app.get('/admin', (req, res) => {
+app.get('/admin', requireAuth, (req, res) => {
     res.redirect('/dashboard');
 });
 
@@ -981,7 +1066,9 @@ app.post('/api/create-status-page', async (req, res) => {
             order.isDelivered,
             order.deliveryDate,
             order.fulfillments,
-            effectivePickupDate // Use replacement tracking date if applicable
+            effectivePickupDate, // Use replacement tracking date if applicable
+            null, // No saved route yet
+            carrierInfo.carrier // Pass carrier name for specific text
         );
 
         const trackingEvents = generatedData.events;
@@ -1174,7 +1261,8 @@ app.get('/api/status/:pageId', async (req, res) => {
                     order.deliveryDate,
                     order.fulfillments,
                     effectivePickupDate,
-                    statusData.route // Pass existing route to keep locations stable
+                    statusData.route, // Pass existing route to keep locations stable
+                    carrierInfo.carrier // Pass carrier name
                 );
                 
                 const updatedEvents = generatedData.events;
