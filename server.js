@@ -144,12 +144,29 @@ const shippingFacilities = {
     'DEFAULT': ['Regional Distribution Center', 'Local Sorting Facility', 'Area Hub']
 };
 
-// Major transit hubs for cross-country shipping
-const majorTransitHubs = [
-    'Memphis, TN Hub', 'Louisville, KY World Hub', 'Indianapolis, IN Hub',
-    'Cincinnati, OH Air Hub', 'Phoenix, AZ Distribution Center', 'Denver, CO Hub',
-    'Dallas, TX Hub', 'Atlanta, GA Hub', 'Chicago, IL Hub', 'Los Angeles, CA Hub'
-];
+// Regional hubs for logical routing
+const regionalHubs = {
+    'West': ['Los Angeles, CA Hub', 'Phoenix, AZ Distribution Center', 'Denver, CO Hub', 'Seattle, WA Hub', 'Las Vegas, NV Hub'],
+    'Midwest': ['Chicago, IL Hub', 'Indianapolis, IN Hub', 'Cincinnati, OH Air Hub', 'Columbus, OH Hub', 'Detroit, MI Hub'],
+    'South': ['Memphis, TN Hub', 'Dallas, TX Hub', 'Atlanta, GA Hub', 'Miami, FL Hub', 'Houston, TX Hub'],
+    'Northeast': ['Newark, NJ Hub', 'Philadelphia, PA Distribution Center', 'New York, NY Hub', 'Boston, MA Hub'],
+    'DEFAULT': ['Central Distribution Center', 'National Logistics Hub']
+};
+
+// Helper to determine region from state code
+function getRegion(stateCode) {
+    const regions = {
+        'West': ['CA', 'OR', 'WA', 'NV', 'AZ', 'ID', 'MT', 'WY', 'UT', 'CO', 'NM', 'AK', 'HI'],
+        'Midwest': ['ND', 'SD', 'NE', 'KS', 'MN', 'IA', 'MO', 'WI', 'IL', 'MI', 'IN', 'OH'],
+        'South': ['TX', 'OK', 'AR', 'LA', 'MS', 'AL', 'TN', 'KY', 'WV', 'VA', 'NC', 'SC', 'GA', 'FL'],
+        'Northeast': ['PA', 'NY', 'NJ', 'CT', 'RI', 'MA', 'VT', 'NH', 'ME', 'DE', 'MD', 'DC']
+    };
+
+    for (const [region, states] of Object.entries(regions)) {
+        if (states.includes(stateCode)) return region;
+    }
+    return 'DEFAULT';
+}
 
 // Shopify configuration
 const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
@@ -333,14 +350,46 @@ function getMainTrackingNumber(order) {
 }
 
 // Updated function to handle fulfillment dates properly with Label Created 2 days before and optional custom pickup date
-function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null) {
+function generateRealisticTrackingEventsWithFulfillment(orderDate, destinationCity, provinceCode, isDelivered, deliveryDate, fulfillments, customPickupDate = null, savedRoute = null) {
     const events = [];
     const today = new Date();
     const orderDateObj = new Date(orderDate);
     
-    // Get appropriate facilities for the destination state
-    const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
-    const destinationFacility = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
+    let originRegion, originFacility, transitHub, finalSortingFacility;
+
+    if (savedRoute) {
+        // Reuse existing route to keep history stable
+        originRegion = savedRoute.originRegion;
+        originFacility = savedRoute.originFacility;
+        transitHub = savedRoute.transitHub;
+        finalSortingFacility = savedRoute.finalSortingFacility;
+    } else {
+        // Get appropriate facilities for the destination state
+        const destRegion = getRegion(provinceCode);
+        const stateFacilities = shippingFacilities[provinceCode] || shippingFacilities['DEFAULT'];
+        finalSortingFacility = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
+        
+        // LOGICAL ROUTING: Determine Origin and Path
+        // 1. Pick an origin region (try to make it different from destination for realism, unless it's a local shipment)
+        originRegion = 'West'; // Default origin (e.g., California dropshipper)
+        
+        // If destination is West, maybe origin is East or Midwest to show travel
+        if (destRegion === 'West') originRegion = Math.random() > 0.5 ? 'Northeast' : 'South';
+        else if (destRegion === 'Northeast') originRegion = Math.random() > 0.5 ? 'West' : 'South';
+        
+        // Get hubs for the chosen regions
+        const originHubs = regionalHubs[originRegion] || regionalHubs['DEFAULT'];
+        originFacility = originHubs[Math.floor(Math.random() * originHubs.length)];
+        
+        // Select an intermediate hub if the regions are different
+        transitHub = null;
+        if (originRegion !== destRegion) {
+            // Pick a hub from a region that isn't the origin or destination (if possible), or just a major hub
+            const transitRegion = destRegion === 'South' ? 'Midwest' : 'South'; // Simple heuristic
+            const possibleTransitHubs = regionalHubs[transitRegion] || regionalHubs['DEFAULT'];
+            transitHub = possibleTransitHubs[Math.floor(Math.random() * possibleTransitHubs.length)];
+        }
+    }
     
     // REAL DATES FROM YOUR SHOPIFY DATA:
     // 1. Order Confirmed = Original order creation date 
@@ -415,37 +464,37 @@ const eventTemplates = [
     },
     { 
         status: 'Label Created', 
-        location: 'Origin Facility', 
+        location: 'Shipping Partner Facility', // Generic start
         fixedDate: labelCreatedDate
     },
     { 
         status: 'Package Picked Up', 
-        location: 'Local Pickup Facility', 
+        location: originFacility, // Starts at the origin hub
         fixedDate: packagePickupDate
     },
     { 
-        status: 'Departed Origin Facility', 
-        location: 'Origin Facility', 
+        status: 'Departed Shipping Partner Facility', 
+        location: originFacility, 
         businessDaysFromPrevious: 1 // 1 day after pickup
     },
     { 
         status: 'In Transit', 
-        location: null, 
+        location: transitHub, // Logical intermediate stop (can be null if short distance)
         businessDaysFromPrevious: getRandomBusinessDaysInterval() 
     },
     { 
         status: 'Arrived at Sorting Facility', 
-        location: null, 
+        location: finalSortingFacility, // Now in the destination state
         businessDaysFromPrevious: getRandomBusinessDaysInterval() 
     },
     { 
         status: 'Departed Sorting Facility', 
-        location: null, 
+        location: finalSortingFacility, 
         businessDaysFromPrevious: getRandomBusinessDaysInterval() 
     },
     { 
         status: 'Arrived at Destination Facility', 
-        location: destinationFacility, 
+        location: `${destinationCity} Distribution Center`, // Close to home
         businessDaysFromPrevious: getRandomBusinessDaysInterval() 
     },
     { 
@@ -475,15 +524,6 @@ const eventTemplates = [
         }
         
         let location = template.location;
-        
-        // For transit events, pick random locations
-        if (!location) {
-            if (template.status.includes('Transit')) {
-                location = majorTransitHubs[Math.floor(Math.random() * majorTransitHubs.length)];
-            } else if (template.status.includes('Sorting')) {
-                location = stateFacilities[Math.floor(Math.random() * stateFacilities.length)];
-            }
-        }
         
         events.push({
             status: template.status,
@@ -527,7 +567,12 @@ const eventTemplates = [
         });
     }
     
-    return events;
+    return {
+        events,
+        route: {
+            originRegion, originFacility, transitHub, finalSortingFacility
+        }
+    };
 }
 
 // Helper function to detect carrier and generate tracking URL
@@ -903,11 +948,11 @@ app.post('/api/create-status-page', async (req, res) => {
             isReplacementTracking = false;
             console.log(`✅ Main tracking number matched: ${trackingNumber}`);
         } else {
-            // Tracking number doesn't match either
-            return res.status(400).json({
-                success: false,
-                error: `Tracking number "${trackingNumber}" does not match the order. Please verify the tracking number and try again.`
-            });
+            // FALLBACK: Tracking number doesn't match either, but user wants to track it anyway.
+            // Treat it as a valid replacement tracking number that just hasn't been synced to Shopify yet.
+            console.log(`⚠️ Tracking number "${trackingNumber}" not found in Shopify - treating as custom replacement`);
+            isReplacementTracking = true;
+            // We don't have a labelCreatedDate from Shopify, so we'll rely on pickupDate or default logic later.
         }
         
         // For replacement tracking, use the metafield created_at as the custom pickup date
@@ -929,7 +974,7 @@ app.post('/api/create-status-page', async (req, res) => {
         const carrierInfo = detectCarrierAndGenerateUrl(trackingNumber);
         
         // Generate realistic tracking events with fulfillment data and optional pickup date
-        const trackingEvents = generateRealisticTrackingEventsWithFulfillment(
+        const generatedData = generateRealisticTrackingEventsWithFulfillment(
             order.createdAt,
             order.shippingAddress.city,
             order.shippingAddress.provinceCode,
@@ -938,6 +983,9 @@ app.post('/api/create-status-page', async (req, res) => {
             order.fulfillments,
             effectivePickupDate // Use replacement tracking date if applicable
         );
+
+        const trackingEvents = generatedData.events;
+        const route = generatedData.route;
 
         // Create status page data
         const statusPageData = {
@@ -953,6 +1001,7 @@ app.post('/api/create-status-page', async (req, res) => {
             isDelivered: order.isDelivered,
             deliveryDate: order.deliveryDate,
             events: trackingEvents,
+            route: route, // Save the route for consistency
             customPickupDate: effectivePickupDate,
             isReplacementTracking: isReplacementTracking, // Flag to indicate this is a replacement
             replacementTrackingAddedDate: isReplacementTracking ? labelCreatedDate : null,
@@ -1117,16 +1166,20 @@ app.get('/api/status/:pageId', async (req, res) => {
                 const carrierInfo = detectCarrierAndGenerateUrl(statusData.trackingNumber);
                 
                 // Regenerate events
-                const updatedEvents = generateRealisticTrackingEventsWithFulfillment(
+                const generatedData = generateRealisticTrackingEventsWithFulfillment(
                     order.createdAt,
                     order.shippingAddress.city,
                     order.shippingAddress.provinceCode,
                     order.isDelivered,
                     order.deliveryDate,
                     order.fulfillments,
-                    effectivePickupDate
+                    effectivePickupDate,
+                    statusData.route // Pass existing route to keep locations stable
                 );
                 
+                const updatedEvents = generatedData.events;
+                const updatedRoute = generatedData.route;
+
                 // Update stored data
                 statusData = {
                     ...statusData,
@@ -1137,6 +1190,7 @@ app.get('/api/status/:pageId', async (req, res) => {
                     isDelivered: order.isDelivered,
                     deliveryDate: order.deliveryDate,
                     events: updatedEvents,
+                    route: updatedRoute, // Ensure route is saved
                     lastUpdated: now.toISOString()
                 }; 
                 
